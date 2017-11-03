@@ -8,7 +8,9 @@ whylinux.dll
 whylinux.a
 whylinux.lib
 whylinux-test-*
+/whylinux
 *.exe
 *.o
 *.obj
 *.lst
+dub.selections.json
