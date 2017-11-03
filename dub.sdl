@@ -1,0 +1,5 @@
+name "whylinux"
+description "A minimal D application."
+authors "guenniman"
+copyright "Copyright © 2017, guenniman"
+license "GPL-3.0"
