@@ -1,6 +1,19 @@
 import std.stdio;
+import std.math;
+import std.string;
 
-void main()
-{
-	writeln("Edit source/app.d to start your project.");
+import glfw3d;
+
+void main() {
+	glfw3dInit();
+	scope (exit)
+		glfw3dTerminate();
+
+	Window w = new Window(853, 600, "WhyLinux");
+
+	while (!w.shouldClose()) {
+		glfwPollEvents();
+
+		w.swapBuffers();
+	}
 }
