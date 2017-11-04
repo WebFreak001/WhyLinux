@@ -36,6 +36,9 @@ class VulkanWindow : Window {
 	}
 
 	override void destroy() {
+		if (commandPool)
+			device.DestroyCommandPool(commandPool, pAllocator);
+
 		foreach (ref fb; swapChainFramebuffers)
 			device.DestroyFramebuffer(fb, pAllocator);
 
@@ -118,8 +121,7 @@ class VulkanWindow : Window {
 		createInfoBase.queueCreateInfoCount = queueCreateInfos.length;
 
 		VkDevice vkdev;
-		vkCreateDevice(physicalDevice, &createInfoBase, pAllocator, &vkdev).enforceVK(
-				"vkCreateDevice");
+		vkCreateDevice(physicalDevice, &createInfoBase, pAllocator, &vkdev).enforceVK("vkCreateDevice");
 
 		device.loadDeviceLevelFunctions(vkdev);
 
@@ -189,8 +191,8 @@ class VulkanWindow : Window {
 		createInfo.clipped = VK_TRUE; // change to false for screenshots
 		createInfo.oldSwapchain = null; // TODO: for recreation of swapchain
 
-		device.vkCreateSwapchainKHR(device.vkDevice, &createInfo, pAllocator, &swapChain).enforceVK(
-				"vkCreateSwapchainKHR");
+		device.vkCreateSwapchainKHR(device.vkDevice, &createInfo, pAllocator,
+				&swapChain).enforceVK("vkCreateSwapchainKHR");
 
 		imageCount = 0;
 		device.vkGetSwapchainImagesKHR(device.vkDevice, swapChain, &imageCount, null);
@@ -221,8 +223,8 @@ class VulkanWindow : Window {
 			createInfo.subresourceRange.baseArrayLayer = 0;
 			createInfo.subresourceRange.layerCount = 1;
 
-			device.CreateImageView(&createInfo, pAllocator, &swapChainImageViews[i]).enforceVK(
-					"vkCreateImageView #" ~ i.to!string);
+			device.CreateImageView(&createInfo, pAllocator,
+					&swapChainImageViews[i]).enforceVK("vkCreateImageView #" ~ i.to!string);
 		}
 	}
 
@@ -252,8 +254,8 @@ class VulkanWindow : Window {
 		renderPassInfo.subpassCount = 1;
 		renderPassInfo.pSubpasses = &subpass;
 
-		device.CreateRenderPass(&renderPassInfo, pAllocator, &renderPass).enforceVK(
-				"vkCreateRenderPass");
+		device.CreateRenderPass(&renderPassInfo, pAllocator, &renderPass)
+			.enforceVK("vkCreateRenderPass");
 	}
 
 	void createGraphicsPipeline() {
@@ -292,6 +294,7 @@ class VulkanWindow : Window {
 		viewport.maxDepth = 1;
 
 		VkRect2D scissor;
+		scissor.offset = VkOffset2D(0, 0);
 		scissor.extent = swapChainExtent;
 
 		VkPipelineViewportStateCreateInfo viewportState;
@@ -351,8 +354,8 @@ class VulkanWindow : Window {
 		pipelineLayoutInfo.pushConstantRangeCount = 0;
 		pipelineLayoutInfo.pPushConstantRanges = null;
 
-		device.CreatePipelineLayout(&pipelineLayoutInfo, pAllocator, &pipelineLayout).enforceVK(
-				"vkCreatePipelineLayout");
+		device.CreatePipelineLayout(&pipelineLayoutInfo, pAllocator,
+				&pipelineLayout).enforceVK("vkCreatePipelineLayout");
 
 		VkGraphicsPipelineCreateInfo pipelineInfo;
 		pipelineInfo.stageCount = cast(uint) shaderStages.length;
@@ -371,8 +374,8 @@ class VulkanWindow : Window {
 		pipelineInfo.basePipelineHandle = null;
 		pipelineInfo.basePipelineIndex = -1;
 
-		device.CreateGraphicsPipelines(null, 1, &pipelineInfo, pAllocator, &graphicsPipeline).enforceVK(
-				"vkCreateGraphicsPipelines");
+		device.CreateGraphicsPipelines(null, 1, &pipelineInfo, pAllocator,
+				&graphicsPipeline).enforceVK("vkCreateGraphicsPipelines");
 	}
 
 	void createFramebuffers() {
@@ -387,8 +390,59 @@ class VulkanWindow : Window {
 			framebufferInfo.height = swapChainExtent.height;
 			framebufferInfo.layers = 1;
 
-			device.CreateFramebuffer(&framebufferInfo, pAllocator, &swapChainFramebuffers[i]).enforceVK(
-					"vkCreateFramebuffer #" ~ i.to!string);
+			device.CreateFramebuffer(&framebufferInfo, pAllocator,
+					&swapChainFramebuffers[i]).enforceVK("vkCreateFramebuffer #" ~ i.to!string);
+		}
+	}
+
+	void createCommandPool() {
+		VkCommandPoolCreateInfo poolInfo;
+		poolInfo.queueFamilyIndex = graphicsIndex;
+		poolInfo.flags = 0;
+		device.CreateCommandPool(&poolInfo, pAllocator, &commandPool)
+			.enforceVK("vkCreateCommandPool");
+	}
+
+	void createCommandBuffers() {
+		commandBuffers.length = swapChainFramebuffers.length;
+
+		VkCommandBufferAllocateInfo allocInfo;
+		allocInfo.commandPool = commandPool;
+		allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		allocInfo.commandBufferCount = cast(uint) commandBuffers.length;
+
+		device.AllocateCommandBuffers(&allocInfo, commandBuffers.ptr)
+			.enforceVK("vkAllocateCommandBuffers");
+
+		foreach (i, ref commandBuffer; commandBuffers) {
+			VkCommandBufferBeginInfo beginInfo;
+			beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
+			beginInfo.pInheritanceInfo = null;
+
+			device.vkBeginCommandBuffer(commandBuffer, &beginInfo);
+
+			VkRenderPassBeginInfo renderPassInfo;
+			renderPassInfo.renderPass = renderPass;
+			renderPassInfo.framebuffer = swapChainFramebuffers[i];
+			renderPassInfo.renderArea.offset = VkOffset2D(0, 0);
+			renderPassInfo.renderArea.extent = swapChainExtent;
+
+			VkClearValue clearColor;
+			clearColor.color.float32[0] = 0;
+			clearColor.color.float32[1] = 0;
+			clearColor.color.float32[2] = 0;
+			clearColor.color.float32[3] = 1.0f;
+
+			renderPassInfo.clearValueCount = 1;
+			renderPassInfo.pClearValues = &clearColor;
+
+			device.vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+			device.vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+
+			device.vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+
+			device.vkCmdEndRenderPass(commandBuffer);
+			device.vkEndCommandBuffer(commandBuffer).enforceVK("vkEndCommandBuffer #" ~ i.to!string);
 		}
 	}
 }

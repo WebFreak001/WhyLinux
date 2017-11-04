@@ -58,6 +58,9 @@ void main() {
 
 	w.createFramebuffers();
 
+	w.createCommandPool();
+	w.createCommandBuffers();
+
 	stderr.writeln("Successfully created vulkan context");
 
 	while (!w.shouldClose()) {

@@ -16,6 +16,8 @@ struct VulkanContext {
 	VkRenderPass renderPass;
 	VkPipelineLayout pipelineLayout;
 	VkPipeline graphicsPipeline;
+	VkCommandPool commandPool;
+	VkCommandBuffer[] commandBuffers;
 
 	VkQueue presentQueue;
 	VkQueue computeQueue;
