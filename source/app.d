@@ -20,6 +20,9 @@ void main() {
 
 	VulkanWindow w = new VulkanWindow(853, 600, "WhyLinux");
 
+	w.setUserPointer(cast(void*) cast(Window) w);
+	w.setSizeCallback(&onWindowResized);
+
 	{
 		ApplicationInfo appInfo;
 		appInfo.applicationName = "WhyLinux";
@@ -67,6 +70,19 @@ void main() {
 	while (!w.shouldClose()) {
 		glfwPollEvents();
 		w.drawFrame();
+	}
+}
+
+extern (C) nothrow void onWindowResized(GLFWwindow* window, int width, int height) {
+	if (width == 0 || height == 0)
+		return;
+
+	auto w = cast(VulkanWindow) glfwGetWindowUserPointer(window);
+	try {
+		w.recreateSwapChain();
+	}
+	catch (Exception e) {
+		assert(false);
 	}
 }
 

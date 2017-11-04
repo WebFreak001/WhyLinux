@@ -31,11 +31,16 @@ class VulkanWindow : Window {
 
 	this(int width, int height, string name) {
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-		glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+		glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 		super(width, height, name);
 	}
 
 	override void destroy() {
+		device.DeviceWaitIdle();
+
+		if (swapChain)
+			destroySwapChain();
+
 		if (renderFinishedSemaphore)
 			device.DestroySemaphore(renderFinishedSemaphore, pAllocator);
 
@@ -45,8 +50,23 @@ class VulkanWindow : Window {
 		if (commandPool)
 			device.DestroyCommandPool(commandPool, pAllocator);
 
+		if (device != DispatchDevice.init)
+			device.DestroyDevice(pAllocator);
+
+		if (surface)
+			vkDestroySurfaceKHR(instance, surface, pAllocator);
+
+		if (instance)
+			vkDestroyInstance(instance, pAllocator);
+
+		super.destroy();
+	}
+
+	void destroySwapChain() {
 		foreach (ref fb; swapChainFramebuffers)
 			device.DestroyFramebuffer(fb, pAllocator);
+
+		device.FreeCommandBuffers(commandPool, cast(uint) commandBuffers.length, commandBuffers.ptr);
 
 		if (graphicsPipeline)
 			device.DestroyPipeline(graphicsPipeline, pAllocator);
@@ -62,17 +82,6 @@ class VulkanWindow : Window {
 
 		if (swapChain)
 			device.vkDestroySwapchainKHR(device.vkDevice, swapChain, pAllocator);
-
-		if (surface)
-			vkDestroySurfaceKHR(instance, surface, pAllocator);
-
-		if (device != DispatchDevice.init)
-			device.DestroyDevice(pAllocator);
-
-		if (instance)
-			vkDestroyInstance(instance, pAllocator);
-
-		super.destroy();
 	}
 
 	void createSurface() {
@@ -153,6 +162,19 @@ class VulkanWindow : Window {
 			else
 				static assert(false, "Invalid queue bit passed");
 		}
+	}
+
+	void recreateSwapChain() {
+		device.DeviceWaitIdle();
+
+		destroySwapChain();
+
+		createSwapChain();
+		createImageViews();
+		createRenderPass();
+		createGraphicsPipeline();
+		createFramebuffers();
+		createCommandBuffers();
 	}
 
 	void createSwapChain() {
@@ -472,10 +494,22 @@ class VulkanWindow : Window {
 			.enforceVK("vkCreateSemaphore renderFinishedSemaphore");
 	}
 
+	void update() {
+	}
+
 	void drawFrame() {
+		update();
+
+		device.vkQueueWaitIdle(presentQueue);
+
 		uint imageIndex;
-		device.vkAcquireNextImageKHR(device.vkDevice, swapChain, ulong.max,
-				imageAvailableSemaphore, null, &imageIndex);
+		auto result = device.vkAcquireNextImageKHR(device.vkDevice, swapChain,
+				ulong.max, imageAvailableSemaphore, null, &imageIndex);
+
+		if (result == VK_ERROR_OUT_OF_DATE_KHR)
+			return recreateSwapChain();
+		else if (result != VK_SUBOPTIMAL_KHR && result != VK_SUCCESS)
+			enforceVK(result, "vkAcquireNextImageKHR");
 
 		VkSemaphore[1] waitSemaphores = [imageAvailableSemaphore];
 		VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -504,6 +538,13 @@ class VulkanWindow : Window {
 
 		presentInfo.pResults = null;
 
-		device.vkQueuePresentKHR(presentQueue, &presentInfo);
+		result = device.vkQueuePresentKHR(presentQueue, &presentInfo);
+
+		if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
+			recreateSwapChain();
+		else if (result != VK_SUCCESS)
+			enforceVK(result, "vkQueuePresentKHR");
+
+		device.vkQueueWaitIdle(presentQueue);
 	}
 }
