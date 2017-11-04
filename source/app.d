@@ -56,6 +56,8 @@ void main() {
 	w.createRenderPass();
 	w.createGraphicsPipeline();
 
+	w.createFramebuffers();
+
 	stderr.writeln("Successfully created vulkan context");
 
 	while (!w.shouldClose()) {
