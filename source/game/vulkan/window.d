@@ -36,6 +36,9 @@ class VulkanWindow : Window {
 	}
 
 	override void destroy() {
+		foreach (ref fb; swapChainFramebuffers)
+			vkDestroyFramebuffer(device, fb, pAllocator);
+
 		if (graphicsPipeline)
 			vkDestroyPipeline(device, graphicsPipeline, pAllocator);
 
@@ -369,5 +372,22 @@ class VulkanWindow : Window {
 
 		vkCreateGraphicsPipelines(device, null, 1, &pipelineInfo, pAllocator, &graphicsPipeline).enforceVK(
 				"vkCreateGraphicsPipelines");
+	}
+
+	void createFramebuffers() {
+		swapChainFramebuffers.length = swapChainImageViews.length;
+
+		foreach (i, ref view; swapChainImageViews) {
+			VkFramebufferCreateInfo framebufferInfo;
+			framebufferInfo.renderPass = renderPass;
+			framebufferInfo.attachmentCount = 1;
+			framebufferInfo.pAttachments = &view;
+			framebufferInfo.width = swapChainExtent.width;
+			framebufferInfo.height = swapChainExtent.height;
+			framebufferInfo.layers = 1;
+
+			vkCreateFramebuffer(device, &framebufferInfo, pAllocator, &swapChainFramebuffers[i]).enforceVK(
+					"vkCreateFramebuffer #" ~ i.to!string);
+		}
 	}
 }

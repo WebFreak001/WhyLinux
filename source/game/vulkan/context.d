@@ -12,6 +12,7 @@ struct VulkanContext {
 	VkExtent2D swapChainExtent;
 	VkImage[] swapChainImages;
 	VkImageView[] swapChainImageViews;
+	VkFramebuffer[] swapChainFramebuffers;
 	VkRenderPass renderPass;
 	VkPipelineLayout pipelineLayout;
 	VkPipeline graphicsPipeline;
