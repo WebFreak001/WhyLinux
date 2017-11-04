@@ -36,6 +36,12 @@ class VulkanWindow : Window {
 	}
 
 	override void destroy() {
+		if (renderFinishedSemaphore)
+			device.DestroySemaphore(renderFinishedSemaphore, pAllocator);
+
+		if (imageAvailableSemaphore)
+			device.DestroySemaphore(imageAvailableSemaphore, pAllocator);
+
 		if (commandPool)
 			device.DestroyCommandPool(commandPool, pAllocator);
 
@@ -254,6 +260,18 @@ class VulkanWindow : Window {
 		renderPassInfo.subpassCount = 1;
 		renderPassInfo.pSubpasses = &subpass;
 
+		VkSubpassDependency subpassDependency;
+		subpassDependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+		subpassDependency.dstSubpass = 0;
+		subpassDependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		subpassDependency.srcAccessMask = 0;
+		subpassDependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		subpassDependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT
+			| VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+		renderPassInfo.dependencyCount = 1;
+		renderPassInfo.pDependencies = &subpassDependency;
+
 		device.CreateRenderPass(&renderPassInfo, pAllocator, &renderPass)
 			.enforceVK("vkCreateRenderPass");
 	}
@@ -444,5 +462,48 @@ class VulkanWindow : Window {
 			device.vkCmdEndRenderPass(commandBuffer);
 			device.vkEndCommandBuffer(commandBuffer).enforceVK("vkEndCommandBuffer #" ~ i.to!string);
 		}
+	}
+
+	void createSemaphores() {
+		VkSemaphoreCreateInfo semaphoreInfo;
+		device.CreateSemaphore(&semaphoreInfo, pAllocator, &imageAvailableSemaphore)
+			.enforceVK("vkCreateSemaphore imageAvailableSemaphore");
+		device.CreateSemaphore(&semaphoreInfo, pAllocator, &renderFinishedSemaphore)
+			.enforceVK("vkCreateSemaphore renderFinishedSemaphore");
+	}
+
+	void drawFrame() {
+		uint imageIndex;
+		device.vkAcquireNextImageKHR(device.vkDevice, swapChain, ulong.max,
+				imageAvailableSemaphore, null, &imageIndex);
+
+		VkSemaphore[1] waitSemaphores = [imageAvailableSemaphore];
+		VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+
+		VkSubmitInfo submitInfo;
+		submitInfo.waitSemaphoreCount = cast(uint) waitSemaphores.length;
+		submitInfo.pWaitSemaphores = waitSemaphores.ptr;
+		submitInfo.pWaitDstStageMask = &waitStage;
+		submitInfo.commandBufferCount = 1;
+		submitInfo.pCommandBuffers = &commandBuffers[imageIndex];
+
+		VkSemaphore[1] signalSemaphores = [renderFinishedSemaphore];
+		submitInfo.signalSemaphoreCount = cast(uint) signalSemaphores.length;
+		submitInfo.pSignalSemaphores = signalSemaphores.ptr;
+
+		device.vkQueueSubmit(graphicsQueue, 1, &submitInfo, null).enforceVK("vkQueueSubmit");
+
+		VkPresentInfoKHR presentInfo;
+		presentInfo.waitSemaphoreCount = cast(uint) signalSemaphores.length;
+		presentInfo.pWaitSemaphores = signalSemaphores.ptr;
+
+		VkSwapchainKHR[1] swapChains = [swapChain];
+		presentInfo.swapchainCount = cast(uint) swapChains.length;
+		presentInfo.pSwapchains = swapChains.ptr;
+		presentInfo.pImageIndices = &imageIndex;
+
+		presentInfo.pResults = null;
+
+		device.vkQueuePresentKHR(presentQueue, &presentInfo);
 	}
 }

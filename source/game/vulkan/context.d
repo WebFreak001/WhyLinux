@@ -19,6 +19,9 @@ struct VulkanContext {
 	VkCommandPool commandPool;
 	VkCommandBuffer[] commandBuffers;
 
+	VkSemaphore imageAvailableSemaphore;
+	VkSemaphore renderFinishedSemaphore;
+
 	VkQueue presentQueue;
 	VkQueue computeQueue;
 	VkQueue graphicsQueue;

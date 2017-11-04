@@ -60,11 +60,13 @@ void main() {
 
 	w.createCommandPool();
 	w.createCommandBuffers();
+	w.createSemaphores();
 
 	stderr.writeln("Successfully created vulkan context");
 
 	while (!w.shouldClose()) {
 		glfwPollEvents();
+		w.drawFrame();
 	}
 }
 
