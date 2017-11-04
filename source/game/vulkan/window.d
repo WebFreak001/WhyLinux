@@ -17,7 +17,8 @@ class VulkanWindow : Window {
 	}
 
 	override void destroy() {
-		vkDestroyInstance(instance, pAllocator);
+		if (instance)
+			vkDestroyInstance(instance, pAllocator);
 
 		super.destroy();
 	}
