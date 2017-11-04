@@ -53,6 +53,9 @@ void main() {
 	w.createSwapChain();
 	w.createImageViews();
 
+	w.createRenderPass();
+	w.createGraphicsPipeline();
+
 	stderr.writeln("Successfully created vulkan context");
 
 	while (!w.shouldClose()) {

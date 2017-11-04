@@ -4,9 +4,12 @@ import erupted;
 
 import glfw3d;
 
+import game.vulkan.context;
+import game.vulkan.shader;
 import game.vulkan.wrap;
 
 import std.conv;
+import std.file : readFile = read;
 
 /// Callback for rating a device. Return <=0 if unsuitable
 alias DeviceScoreFn = int function(VkSurfaceKHR, VkPhysicalDevice,
@@ -23,29 +26,8 @@ int wrapRate(alias fn)(VkPhysicalDevice device, VkSurfaceKHR surface) {
 }
 
 class VulkanWindow : Window {
-	VkInstance instance;
-	const(VkAllocationCallbacks)* pAllocator;
-	VkPhysicalDevice physicalDevice;
-	VkDevice device;
-	VkSwapchainKHR swapChain;
-	VkFormat swapChainImageFormat;
-	VkExtent2D swapChainExtent;
-	VkImage[] swapChainImages;
-	VkImageView[] swapChainImageViews;
-
-	VkQueue presentQueue;
-	VkQueue computeQueue;
-	VkQueue graphicsQueue;
-	VkQueue sparseBindingQueue;
-	VkQueue transferQueue;
-
-	uint presentIndex = uint.max;
-	uint computeIndex = uint.max;
-	uint graphicsIndex = uint.max;
-	uint sparseBindingIndex = uint.max;
-	uint transferIndex = uint.max;
-
-	VkSurfaceKHR surface;
+	VulkanContext context;
+	alias context this;
 
 	this(int width, int height, string name) {
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -54,6 +36,15 @@ class VulkanWindow : Window {
 	}
 
 	override void destroy() {
+		if (graphicsPipeline)
+			vkDestroyPipeline(device, graphicsPipeline, pAllocator);
+
+		if (pipelineLayout)
+			vkDestroyPipelineLayout(device, pipelineLayout, pAllocator);
+
+		if (renderPass)
+			vkDestroyRenderPass(device, renderPass, pAllocator);
+
 		foreach (ref view; swapChainImageViews)
 			vkDestroyImageView(device, view, pAllocator);
 
@@ -100,7 +91,7 @@ class VulkanWindow : Window {
 		if (deviceCount == 0)
 			throw new Exception("No GPU with vulkan support found");
 
-		auto picked = devices.maxElement!(a => a.wrapRate!rateDevice(surface));
+		auto picked = devices.maxElement!(a => a.wrapRate!rateDevice(context.surface));
 
 		if (wrapRate!rateDevice(picked, surface) <= 0)
 			throw new Exception("No suitable GPU found");
@@ -229,5 +220,154 @@ class VulkanWindow : Window {
 			vkCreateImageView(device, &createInfo, pAllocator, &swapChainImageViews[i]).enforceVK(
 					"vkCreateImageView #" ~ i.to!string);
 		}
+	}
+
+	void createRenderPass() {
+		VkAttachmentDescription colorAttachment;
+		colorAttachment.format = swapChainImageFormat;
+		colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT; // TODO: multisampling
+		colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR; // TODO: change to DONT_CARE once we have a skybox
+		colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+		colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+		VkAttachmentReference colorAttachmentRef;
+		colorAttachmentRef.attachment = 0;
+		colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+		VkSubpassDescription subpass;
+		subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+		subpass.colorAttachmentCount = 1;
+		subpass.pColorAttachments = &colorAttachmentRef;
+
+		VkRenderPassCreateInfo renderPassInfo;
+		renderPassInfo.attachmentCount = 1;
+		renderPassInfo.pAttachments = &colorAttachment;
+		renderPassInfo.subpassCount = 1;
+		renderPassInfo.pSubpasses = &subpass;
+
+		vkCreateRenderPass(device, &renderPassInfo, pAllocator, &renderPass).enforceVK(
+				"vkCreateRenderPass");
+	}
+
+	void createGraphicsPipeline() {
+		auto vertShaderModule = context.createShaderModule("shaders/vert.spv");
+		scope (exit)
+			vkDestroyShaderModule(device, vertShaderModule, pAllocator);
+
+		auto fragShaderModule = context.createShaderModule("shaders/frag.spv");
+		scope (exit)
+			vkDestroyShaderModule(device, fragShaderModule, pAllocator);
+
+		VkPipelineShaderStageCreateInfo vertShaderStageInfo;
+		vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+		vertShaderStageInfo._module = vertShaderModule;
+		vertShaderStageInfo.pName = "main";
+
+		// TODO: use pSpecializationInfo in shaders for constants (optimization like static if)
+
+		VkPipelineShaderStageCreateInfo fragShaderStageInfo;
+		fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+		fragShaderStageInfo._module = fragShaderModule;
+		fragShaderStageInfo.pName = "main";
+
+		VkPipelineShaderStageCreateInfo[2] shaderStages = [vertShaderStageInfo, fragShaderStageInfo];
+
+		VkPipelineVertexInputStateCreateInfo vertexInputInfo;
+		VkPipelineInputAssemblyStateCreateInfo inputAssembly;
+		inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+		VkViewport viewport;
+		viewport.x = 0;
+		viewport.y = 0;
+		viewport.width = cast(float) swapChainExtent.width;
+		viewport.height = cast(float) swapChainExtent.height;
+		viewport.minDepth = 0;
+		viewport.maxDepth = 1;
+
+		VkRect2D scissor;
+		scissor.extent = swapChainExtent;
+
+		VkPipelineViewportStateCreateInfo viewportState;
+		viewportState.viewportCount = 1;
+		viewportState.pViewports = &viewport;
+		viewportState.scissorCount = 1;
+		viewportState.pScissors = &scissor;
+
+		VkPipelineRasterizationStateCreateInfo rasterizer;
+		rasterizer.depthClampEnable = VK_FALSE;
+		rasterizer.rasterizerDiscardEnable = VK_FALSE;
+		rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+		rasterizer.lineWidth = 1.0f;
+		rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+		rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+		rasterizer.depthBiasEnable = VK_FALSE;
+		rasterizer.depthBiasConstantFactor = 0.0f;
+		rasterizer.depthBiasClamp = 0.0f;
+		rasterizer.depthBiasSlopeFactor = 0.0f;
+
+		VkPipelineMultisampleStateCreateInfo multisampling; // TODO: add anti aliasing
+		multisampling.sampleShadingEnable = VK_FALSE;
+		multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+		multisampling.minSampleShading = 1.0f;
+		multisampling.pSampleMask = null;
+		multisampling.alphaToCoverageEnable = VK_FALSE;
+		multisampling.alphaToOneEnable = VK_FALSE;
+
+		// TODO: VkPipelineDepthStencilStateCreateInfo for 3D
+
+		VkPipelineColorBlendAttachmentState colorBlendAttachment;
+		colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_A_BIT
+			| VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
+		colorBlendAttachment.blendEnable = VK_FALSE; // TODO: turn this on
+		colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+		colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+		colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+		colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+		colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+		colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+
+		VkPipelineColorBlendStateCreateInfo colorBlending;
+		colorBlending.logicOpEnable = VK_FALSE;
+		colorBlending.attachmentCount = 1;
+		colorBlending.pAttachments = &colorBlendAttachment;
+
+		// TODO: use VK_DYNAMIC_STATE_* here
+		//VkDynamicState[2] dynamicStates = [VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_LINE_WIDTH];
+		//VkPipelineDynamicStateCreateInfo dynamicState;
+		//dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+		//dynamicState.dynamicStateCount = cast(uint) dynamicStates.length;
+		//dynamicState.pDynamicStates = dynamicStates.ptr;
+
+		VkPipelineLayoutCreateInfo pipelineLayoutInfo;
+		pipelineLayoutInfo.setLayoutCount = 0;
+		pipelineLayoutInfo.pSetLayouts = null;
+		pipelineLayoutInfo.pushConstantRangeCount = 0;
+		pipelineLayoutInfo.pPushConstantRanges = null;
+
+		vkCreatePipelineLayout(device, &pipelineLayoutInfo, pAllocator, &pipelineLayout).enforceVK(
+				"vkCreatePipelineLayout");
+
+		VkGraphicsPipelineCreateInfo pipelineInfo;
+		pipelineInfo.stageCount = cast(uint) shaderStages.length;
+		pipelineInfo.pStages = shaderStages.ptr;
+		pipelineInfo.pVertexInputState = &vertexInputInfo;
+		pipelineInfo.pInputAssemblyState = &inputAssembly;
+		pipelineInfo.pViewportState = &viewportState;
+		pipelineInfo.pRasterizationState = &rasterizer;
+		pipelineInfo.pMultisampleState = &multisampling;
+		pipelineInfo.pDepthStencilState = null;
+		pipelineInfo.pColorBlendState = &colorBlending;
+		pipelineInfo.pDynamicState = null;
+		pipelineInfo.layout = pipelineLayout;
+		pipelineInfo.renderPass = renderPass;
+		pipelineInfo.subpass = 0;
+		pipelineInfo.basePipelineHandle = null;
+		pipelineInfo.basePipelineIndex = -1;
+
+		vkCreateGraphicsPipelines(device, null, 1, &pipelineInfo, pAllocator, &graphicsPipeline).enforceVK(
+				"vkCreateGraphicsPipelines");
 	}
 }

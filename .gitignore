@@ -14,3 +14,4 @@ whylinux-test-*
 *.obj
 *.lst
 dub.selections.json
+*.spv
