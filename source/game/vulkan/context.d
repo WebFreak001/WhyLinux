@@ -6,7 +6,7 @@ struct VulkanContext {
 	VkInstance instance;
 	const(VkAllocationCallbacks)* pAllocator;
 	VkPhysicalDevice physicalDevice;
-	VkDevice device;
+	DispatchDevice device;
 	VkSwapchainKHR swapChain;
 	VkFormat swapChainImageFormat;
 	VkExtent2D swapChainExtent;

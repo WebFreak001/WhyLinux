@@ -37,28 +37,28 @@ class VulkanWindow : Window {
 
 	override void destroy() {
 		foreach (ref fb; swapChainFramebuffers)
-			vkDestroyFramebuffer(device, fb, pAllocator);
+			device.DestroyFramebuffer(fb, pAllocator);
 
 		if (graphicsPipeline)
-			vkDestroyPipeline(device, graphicsPipeline, pAllocator);
+			device.DestroyPipeline(graphicsPipeline, pAllocator);
 
 		if (pipelineLayout)
-			vkDestroyPipelineLayout(device, pipelineLayout, pAllocator);
+			device.DestroyPipelineLayout(pipelineLayout, pAllocator);
 
 		if (renderPass)
-			vkDestroyRenderPass(device, renderPass, pAllocator);
+			device.DestroyRenderPass(renderPass, pAllocator);
 
 		foreach (ref view; swapChainImageViews)
-			vkDestroyImageView(device, view, pAllocator);
+			device.DestroyImageView(view, pAllocator);
 
 		if (swapChain)
-			vkDestroySwapchainKHR(device, swapChain, pAllocator);
+			device.vkDestroySwapchainKHR(device.vkDevice, swapChain, pAllocator);
 
 		if (surface)
 			vkDestroySurfaceKHR(instance, surface, pAllocator);
 
-		if (device)
-			vkDestroyDevice(device, pAllocator);
+		if (device != DispatchDevice.init)
+			device.DestroyDevice(pAllocator);
 
 		if (instance)
 			vkDestroyInstance(instance, pAllocator);
@@ -117,28 +117,29 @@ class VulkanWindow : Window {
 		createInfoBase.pQueueCreateInfos = queueCreateInfos.ptr;
 		createInfoBase.queueCreateInfoCount = queueCreateInfos.length;
 
-		vkCreateDevice(physicalDevice, &createInfoBase, pAllocator, &device).enforceVK(
+		VkDevice vkdev;
+		vkCreateDevice(physicalDevice, &createInfoBase, pAllocator, &vkdev).enforceVK(
 				"vkCreateDevice");
 
-		loadDeviceLevelFunctions(device);
+		device.loadDeviceLevelFunctions(vkdev);
 
-		vkGetDeviceQueue(device, indices.present, 0, &presentQueue);
+		device.GetDeviceQueue(indices.present, 0, &presentQueue);
 		presentIndex = indices.present;
 		foreach (bit; vkQueueFlagBits) {
 			static if (bit == VkQueueFlagBits.VK_QUEUE_COMPUTE_BIT) {
-				vkGetDeviceQueue(device, indices.compute, 0, &computeQueue);
+				device.GetDeviceQueue(indices.compute, 0, &computeQueue);
 				computeIndex = indices.compute;
 			}
 			else static if (bit == VkQueueFlagBits.VK_QUEUE_GRAPHICS_BIT) {
-				vkGetDeviceQueue(device, indices.graphics, 0, &graphicsQueue);
+				device.GetDeviceQueue(indices.graphics, 0, &graphicsQueue);
 				graphicsIndex = indices.graphics;
 			}
 			else static if (bit == VkQueueFlagBits.VK_QUEUE_SPARSE_BINDING_BIT) {
-				vkGetDeviceQueue(device, indices.sparseBinding, 0, &sparseBindingQueue);
+				device.GetDeviceQueue(indices.sparseBinding, 0, &sparseBindingQueue);
 				sparseBindingIndex = indices.sparseBinding;
 			}
 			else static if (bit == VkQueueFlagBits.VK_QUEUE_TRANSFER_BIT) {
-				vkGetDeviceQueue(device, indices.transfer, 0, &transferQueue);
+				device.GetDeviceQueue(indices.transfer, 0, &transferQueue);
 				transferIndex = indices.transfer;
 			}
 			else
@@ -188,13 +189,13 @@ class VulkanWindow : Window {
 		createInfo.clipped = VK_TRUE; // change to false for screenshots
 		createInfo.oldSwapchain = null; // TODO: for recreation of swapchain
 
-		vkCreateSwapchainKHR(device, &createInfo, pAllocator, &swapChain).enforceVK(
+		device.vkCreateSwapchainKHR(device.vkDevice, &createInfo, pAllocator, &swapChain).enforceVK(
 				"vkCreateSwapchainKHR");
 
 		imageCount = 0;
-		vkGetSwapchainImagesKHR(device, swapChain, &imageCount, null);
+		device.vkGetSwapchainImagesKHR(device.vkDevice, swapChain, &imageCount, null);
 		swapChainImages.length = imageCount;
-		vkGetSwapchainImagesKHR(device, swapChain, &imageCount, swapChainImages.ptr);
+		device.vkGetSwapchainImagesKHR(device.vkDevice, swapChain, &imageCount, swapChainImages.ptr);
 
 		swapChainImageFormat = surfaceFormat.format;
 		swapChainExtent = extent;
@@ -220,7 +221,7 @@ class VulkanWindow : Window {
 			createInfo.subresourceRange.baseArrayLayer = 0;
 			createInfo.subresourceRange.layerCount = 1;
 
-			vkCreateImageView(device, &createInfo, pAllocator, &swapChainImageViews[i]).enforceVK(
+			device.CreateImageView(&createInfo, pAllocator, &swapChainImageViews[i]).enforceVK(
 					"vkCreateImageView #" ~ i.to!string);
 		}
 	}
@@ -251,18 +252,18 @@ class VulkanWindow : Window {
 		renderPassInfo.subpassCount = 1;
 		renderPassInfo.pSubpasses = &subpass;
 
-		vkCreateRenderPass(device, &renderPassInfo, pAllocator, &renderPass).enforceVK(
+		device.CreateRenderPass(&renderPassInfo, pAllocator, &renderPass).enforceVK(
 				"vkCreateRenderPass");
 	}
 
 	void createGraphicsPipeline() {
 		auto vertShaderModule = context.createShaderModule("shaders/vert.spv");
 		scope (exit)
-			vkDestroyShaderModule(device, vertShaderModule, pAllocator);
+			device.DestroyShaderModule(vertShaderModule, pAllocator);
 
 		auto fragShaderModule = context.createShaderModule("shaders/frag.spv");
 		scope (exit)
-			vkDestroyShaderModule(device, fragShaderModule, pAllocator);
+			device.DestroyShaderModule(fragShaderModule, pAllocator);
 
 		VkPipelineShaderStageCreateInfo vertShaderStageInfo;
 		vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
@@ -350,7 +351,7 @@ class VulkanWindow : Window {
 		pipelineLayoutInfo.pushConstantRangeCount = 0;
 		pipelineLayoutInfo.pPushConstantRanges = null;
 
-		vkCreatePipelineLayout(device, &pipelineLayoutInfo, pAllocator, &pipelineLayout).enforceVK(
+		device.CreatePipelineLayout(&pipelineLayoutInfo, pAllocator, &pipelineLayout).enforceVK(
 				"vkCreatePipelineLayout");
 
 		VkGraphicsPipelineCreateInfo pipelineInfo;
@@ -370,7 +371,7 @@ class VulkanWindow : Window {
 		pipelineInfo.basePipelineHandle = null;
 		pipelineInfo.basePipelineIndex = -1;
 
-		vkCreateGraphicsPipelines(device, null, 1, &pipelineInfo, pAllocator, &graphicsPipeline).enforceVK(
+		device.CreateGraphicsPipelines(null, 1, &pipelineInfo, pAllocator, &graphicsPipeline).enforceVK(
 				"vkCreateGraphicsPipelines");
 	}
 
@@ -386,7 +387,7 @@ class VulkanWindow : Window {
 			framebufferInfo.height = swapChainExtent.height;
 			framebufferInfo.layers = 1;
 
-			vkCreateFramebuffer(device, &framebufferInfo, pAllocator, &swapChainFramebuffers[i]).enforceVK(
+			device.CreateFramebuffer(&framebufferInfo, pAllocator, &swapChainFramebuffers[i]).enforceVK(
 					"vkCreateFramebuffer #" ~ i.to!string);
 		}
 	}
