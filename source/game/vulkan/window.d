@@ -12,18 +12,27 @@ import game.vulkan.wrap;
 
 import std.conv;
 import std.file : readFile = read;
+import std.traits;
 
 //dfmt off
-__gshared Vertex[] vertices = [
+__gshared Vertex[4] vertices = [
 	Vertex(vec2(-0.5f, -0.5f), vec3(1, 1, 1)),
 	Vertex(vec2(0.5f, -0.5f), vec3(0, 1, 0)),
 	Vertex(vec2(0.5f, 0.5f), vec3(0, 0, 1)),
 	Vertex(vec2(-0.5f, 0.5f), vec3(1, 1, 1)),
 ];
 
-__gshared ushort[] indices = [
+__gshared auto verticesSize = vertices.sizeof;
+
+__gshared ushort[6] indices = [
 	0, 1, 2, 2, 3, 0
 ];
+
+__gshared auto indicesSize = indices.sizeof;
+
+static assert(isStaticArray!(typeof(vertices)));
+static assert(isStaticArray!(typeof(indices)));
+
 //dfmt on
 
 /// Callback for rating a device. Return <=0 if unsuitable
@@ -56,17 +65,11 @@ class VulkanWindow : Window {
 		if (swapChain)
 			destroySwapChain();
 
-		if (indexBuffer)
-			device.DestroyBuffer(indexBuffer, pAllocator);
+		if (meshBuffer)
+			device.DestroyBuffer(meshBuffer, pAllocator);
 
-		if (indexBufferMemory)
-			device.FreeMemory(indexBufferMemory, pAllocator);
-
-		if (vertexBuffer)
-			device.DestroyBuffer(vertexBuffer, pAllocator);
-
-		if (vertexBufferMemory)
-			device.FreeMemory(vertexBufferMemory, pAllocator);
+		if (meshBufferMemory)
+			device.FreeMemory(meshBufferMemory, pAllocator);
 
 		if (renderFinishedSemaphore)
 			device.DestroySemaphore(renderFinishedSemaphore, pAllocator);
@@ -471,48 +474,28 @@ class VulkanWindow : Window {
 	}
 
 	void createVertexBuffer() {
-		{ // vertex buffer
-			VkBuffer stagingBuffer;
-			VkDeviceMemory stagingBufferMemory;
-			VkDeviceSize bufferSize = typeof(vertices[0]).sizeof * vertices.length;
-			createBuffer(context, bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-					VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-					stagingBuffer, stagingBufferMemory);
+		VkDeviceSize meshBufferSize = verticesSize + indicesSize;
 
-			void* data;
-			device.MapMemory(stagingBufferMemory, 0, bufferSize, 0, &data);
-			data[0 .. bufferSize] = vertices;
-			device.UnmapMemory(stagingBufferMemory);
+		createBuffer(context, meshBufferSize,
+				VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, meshBuffer, meshBufferMemory);
 
-			createBuffer(context, bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertexBuffer, vertexBufferMemory);
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
+		createBuffer(context, meshBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				stagingBuffer, stagingBufferMemory);
 
-			copyBufferSync(context, stagingBuffer, vertexBuffer, bufferSize);
+		void* data;
+		device.MapMemory(stagingBufferMemory, 0, meshBufferSize, 0, &data);
+		data[0 .. verticesSize] = cast(void[]) vertices;
+		data[verticesSize .. verticesSize + indicesSize] = cast(void[]) indices;
+		device.UnmapMemory(stagingBufferMemory);
 
-			device.DestroyBuffer(stagingBuffer, pAllocator);
-			device.FreeMemory(stagingBufferMemory, pAllocator);
-		}
-		{ // index buffer
-			VkBuffer stagingBuffer;
-			VkDeviceMemory stagingBufferMemory;
-			VkDeviceSize bufferSize = typeof(indices[0]).sizeof * indices.length;
-			createBuffer(context, bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-					VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-					stagingBuffer, stagingBufferMemory);
+		copyBufferSync(context, stagingBuffer, meshBuffer, meshBufferSize);
 
-			void* data;
-			device.MapMemory(stagingBufferMemory, 0, bufferSize, 0, &data);
-			data[0 .. bufferSize] = indices;
-			device.UnmapMemory(stagingBufferMemory);
-
-			createBuffer(context, bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
-
-			copyBufferSync(context, stagingBuffer, indexBuffer, bufferSize);
-
-			device.DestroyBuffer(stagingBuffer, pAllocator);
-			device.FreeMemory(stagingBufferMemory, pAllocator);
-		}
+		device.DestroyBuffer(stagingBuffer, pAllocator);
+		device.FreeMemory(stagingBufferMemory, pAllocator);
 	}
 
 	void createCommandPool() {
@@ -559,12 +542,11 @@ class VulkanWindow : Window {
 			device.vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 			device.vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
-			const(VkBuffer)[1] vertexBuffers = [vertexBuffer];
-			const(VkDeviceSize)[vertexBuffers.length] offsets = [0];
-			device.vkCmdBindVertexBuffers(commandBuffer, 0,
-					cast(uint) vertexBuffers.length, vertexBuffers.ptr, offsets.ptr);
+			VkDeviceSize vertexOffset = 0;
+			VkDeviceSize indexOffset = verticesSize;
+			device.vkCmdBindVertexBuffers(commandBuffer, 0, 1, &meshBuffer, &vertexOffset);
 
-			context.device.vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0,
+			context.device.vkCmdBindIndexBuffer(commandBuffer, meshBuffer, indexOffset,
 					is(typeof(indices[0]) == ushort) ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
 
 			context.device.vkCmdDrawIndexed(commandBuffer, cast(uint) indices.length, 1, 0, 0, 0);
