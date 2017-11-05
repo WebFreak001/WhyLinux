@@ -62,6 +62,9 @@ void main() {
 	w.createFramebuffers();
 
 	w.createCommandPool();
+
+	w.createVertexBuffer();
+
 	w.createCommandBuffers();
 	w.createSemaphores();
 

@@ -3,13 +3,20 @@ module game.vulkan.window;
 import erupted;
 
 import glfw3d;
+import gl3n.linalg;
 
 import game.vulkan.context;
+import game.vulkan.mesh;
 import game.vulkan.shader;
 import game.vulkan.wrap;
 
 import std.conv;
 import std.file : readFile = read;
+
+__gshared Vertex[] vertices = [
+	Vertex(vec2(0, -0.5f), vec3(1, 1, 1)), Vertex(vec2(0.5f, 0.5f), vec3(0, 1,
+		0)), Vertex(vec2(-0.5f, 0.5f), vec3(0, 0, 1))
+];
 
 /// Callback for rating a device. Return <=0 if unsuitable
 alias DeviceScoreFn = int function(VkSurfaceKHR, VkPhysicalDevice,
@@ -40,6 +47,12 @@ class VulkanWindow : Window {
 
 		if (swapChain)
 			destroySwapChain();
+
+		if (vertexBuffer)
+			device.DestroyBuffer(vertexBuffer, pAllocator);
+
+		if (vertexBufferMemory)
+			device.FreeMemory(vertexBufferMemory, pAllocator);
 
 		if (renderFinishedSemaphore)
 			device.DestroySemaphore(renderFinishedSemaphore, pAllocator);
@@ -321,7 +334,15 @@ class VulkanWindow : Window {
 
 		VkPipelineShaderStageCreateInfo[2] shaderStages = [vertShaderStageInfo, fragShaderStageInfo];
 
+		auto bindingDescription = Vertex.bindingDescription;
+		auto attributeDescriptions = Vertex.attributeDescriptions;
+
 		VkPipelineVertexInputStateCreateInfo vertexInputInfo;
+		vertexInputInfo.vertexBindingDescriptionCount = 1;
+		vertexInputInfo.vertexAttributeDescriptionCount = cast(uint) attributeDescriptions.length;
+		vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+		vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.ptr;
+
 		VkPipelineInputAssemblyStateCreateInfo inputAssembly;
 		inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 
@@ -435,6 +456,26 @@ class VulkanWindow : Window {
 		}
 	}
 
+	void createVertexBuffer() {
+		VkDeviceSize bufferSize = Vertex.sizeof * vertices.length;
+		createBuffer(context, bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				stagingBuffer, stagingBufferMemory);
+
+		void* data;
+		device.MapMemory(stagingBufferMemory, 0, bufferSize, 0, &data);
+		data[0 .. bufferSize] = vertices;
+		device.UnmapMemory(stagingBufferMemory);
+
+		createBuffer(context, bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertexBuffer, vertexBufferMemory);
+
+		copyBufferSync(context, stagingBuffer, vertexBuffer, bufferSize);
+
+		device.DestroyBuffer(stagingBuffer, pAllocator);
+		device.FreeMemory(stagingBufferMemory, pAllocator);
+	}
+
 	void createCommandPool() {
 		VkCommandPoolCreateInfo poolInfo;
 		poolInfo.queueFamilyIndex = graphicsIndex;
@@ -479,7 +520,12 @@ class VulkanWindow : Window {
 			device.vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 			device.vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
-			device.vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+			const(VkBuffer)[1] vertexBuffers = [vertexBuffer];
+			const(VkDeviceSize)[vertexBuffers.length] offsets = [0];
+			device.vkCmdBindVertexBuffers(commandBuffer, 0,
+					cast(uint) vertexBuffers.length, vertexBuffers.ptr, offsets.ptr);
+
+			device.vkCmdDraw(commandBuffer, cast(uint) vertices.length, 1, 0, 0);
 
 			device.vkCmdEndRenderPass(commandBuffer);
 			device.vkEndCommandBuffer(commandBuffer).enforceVK("vkEndCommandBuffer #" ~ i.to!string);

@@ -1,5 +1,7 @@
 module game.vulkan.wrap;
 
+import game.vulkan.context;
+
 import erupted;
 
 import std.algorithm;
@@ -253,4 +255,75 @@ VkExtent2D chooseSwapExtent(in ref VkSurfaceCapabilitiesKHR capabilities, int wi
 
 		return actualExtent;
 	}
+}
+
+uint findMemoryType(VkPhysicalDevice device, uint typeFilter, VkMemoryPropertyFlags properties) {
+	VkPhysicalDeviceMemoryProperties memProperties;
+	vkGetPhysicalDeviceMemoryProperties(device, &memProperties);
+
+	for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+		if ((typeFilter & (1 << i))
+				&& (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+			return i;
+		}
+	}
+
+	throw new Exception("Failed to find suitable memory type");
+}
+
+void createBuffer(ref VulkanContext context, VkDeviceSize size, VkBufferUsageFlags usage,
+		VkMemoryPropertyFlags properties, ref VkBuffer buffer, ref VkDeviceMemory bufferMemory) {
+	VkBufferCreateInfo bufferInfo;
+	bufferInfo.size = size;
+	bufferInfo.usage = usage;
+	bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+	context.device.CreateBuffer(&bufferInfo, context.pAllocator, &buffer)
+		.enforceVK("vkCreateBuffer");
+
+	VkMemoryRequirements memRequirements;
+	context.device.GetBufferMemoryRequirements(buffer, &memRequirements);
+
+	VkMemoryAllocateInfo allocInfo;
+	allocInfo.allocationSize = memRequirements.size;
+	allocInfo.memoryTypeIndex = findMemoryType(context.physicalDevice,
+			memRequirements.memoryTypeBits, properties);
+
+	context.device.AllocateMemory(&allocInfo, context.pAllocator,
+			&bufferMemory).enforceVK("vkAllocateMemory");
+
+	context.device.BindBufferMemory(buffer, bufferMemory, 0);
+}
+
+void copyBufferSync(ref VulkanContext context, VkBuffer src, VkBuffer dst,
+		VkDeviceSize size, VkDeviceSize srcOffset = 0, VkDeviceSize dstOffset = 0) {
+	VkCommandBufferAllocateInfo allocInfo;
+	allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+	allocInfo.commandPool = context.commandPool;
+	allocInfo.commandBufferCount = 1;
+
+	VkCommandBuffer commandBuffer;
+	context.device.AllocateCommandBuffers(&allocInfo, &commandBuffer);
+
+	VkCommandBufferBeginInfo beginInfo;
+	beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+	context.device.vkBeginCommandBuffer(commandBuffer, &beginInfo);
+	scope (exit)
+		context.device.FreeCommandBuffers(context.commandPool, 1, &commandBuffer);
+
+	VkBufferCopy copyRegion;
+	copyRegion.srcOffset = srcOffset;
+	copyRegion.dstOffset = dstOffset;
+	copyRegion.size = size;
+	context.device.vkCmdCopyBuffer(commandBuffer, src, dst, 1, &copyRegion);
+
+	context.device.vkEndCommandBuffer(commandBuffer);
+
+	VkSubmitInfo submitInfo;
+	submitInfo.commandBufferCount = 1;
+	submitInfo.pCommandBuffers = &commandBuffer;
+
+	context.device.vkQueueSubmit(context.graphicsQueue, 1, &submitInfo, null);
+	context.device.vkQueueWaitIdle(context.graphicsQueue);
 }
