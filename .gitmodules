@@ -1,0 +1,3 @@
+[submodule "glfw3d"]
+	path = glfw3d
+	url = https://github.com/WebFreak001/glfw3d.git
