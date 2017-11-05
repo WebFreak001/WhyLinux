@@ -21,8 +21,8 @@ struct VulkanContext {
 
 	VkBuffer vertexBuffer;
 	VkDeviceMemory vertexBufferMemory;
-	VkBuffer stagingBuffer;
-	VkDeviceMemory stagingBufferMemory;
+	VkBuffer indexBuffer;
+	VkDeviceMemory indexBufferMemory;
 
 	VkSemaphore imageAvailableSemaphore;
 	VkSemaphore renderFinishedSemaphore;

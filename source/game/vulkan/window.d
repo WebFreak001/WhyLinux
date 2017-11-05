@@ -13,10 +13,18 @@ import game.vulkan.wrap;
 import std.conv;
 import std.file : readFile = read;
 
+//dfmt off
 __gshared Vertex[] vertices = [
-	Vertex(vec2(0, -0.5f), vec3(1, 1, 1)), Vertex(vec2(0.5f, 0.5f), vec3(0, 1,
-		0)), Vertex(vec2(-0.5f, 0.5f), vec3(0, 0, 1))
+	Vertex(vec2(-0.5f, -0.5f), vec3(1, 1, 1)),
+	Vertex(vec2(0.5f, -0.5f), vec3(0, 1, 0)),
+	Vertex(vec2(0.5f, 0.5f), vec3(0, 0, 1)),
+	Vertex(vec2(-0.5f, 0.5f), vec3(1, 1, 1)),
 ];
+
+__gshared ushort[] indices = [
+	0, 1, 2, 2, 3, 0
+];
+//dfmt on
 
 /// Callback for rating a device. Return <=0 if unsuitable
 alias DeviceScoreFn = int function(VkSurfaceKHR, VkPhysicalDevice,
@@ -47,6 +55,12 @@ class VulkanWindow : Window {
 
 		if (swapChain)
 			destroySwapChain();
+
+		if (indexBuffer)
+			device.DestroyBuffer(indexBuffer, pAllocator);
+
+		if (indexBufferMemory)
+			device.FreeMemory(indexBufferMemory, pAllocator);
 
 		if (vertexBuffer)
 			device.DestroyBuffer(vertexBuffer, pAllocator);
@@ -457,23 +471,48 @@ class VulkanWindow : Window {
 	}
 
 	void createVertexBuffer() {
-		VkDeviceSize bufferSize = Vertex.sizeof * vertices.length;
-		createBuffer(context, bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-				stagingBuffer, stagingBufferMemory);
+		{ // vertex buffer
+			VkBuffer stagingBuffer;
+			VkDeviceMemory stagingBufferMemory;
+			VkDeviceSize bufferSize = typeof(vertices[0]).sizeof * vertices.length;
+			createBuffer(context, bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+					VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+					stagingBuffer, stagingBufferMemory);
 
-		void* data;
-		device.MapMemory(stagingBufferMemory, 0, bufferSize, 0, &data);
-		data[0 .. bufferSize] = vertices;
-		device.UnmapMemory(stagingBufferMemory);
+			void* data;
+			device.MapMemory(stagingBufferMemory, 0, bufferSize, 0, &data);
+			data[0 .. bufferSize] = vertices;
+			device.UnmapMemory(stagingBufferMemory);
 
-		createBuffer(context, bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertexBuffer, vertexBufferMemory);
+			createBuffer(context, bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertexBuffer, vertexBufferMemory);
 
-		copyBufferSync(context, stagingBuffer, vertexBuffer, bufferSize);
+			copyBufferSync(context, stagingBuffer, vertexBuffer, bufferSize);
 
-		device.DestroyBuffer(stagingBuffer, pAllocator);
-		device.FreeMemory(stagingBufferMemory, pAllocator);
+			device.DestroyBuffer(stagingBuffer, pAllocator);
+			device.FreeMemory(stagingBufferMemory, pAllocator);
+		}
+		{ // index buffer
+			VkBuffer stagingBuffer;
+			VkDeviceMemory stagingBufferMemory;
+			VkDeviceSize bufferSize = typeof(indices[0]).sizeof * indices.length;
+			createBuffer(context, bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+					VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+					stagingBuffer, stagingBufferMemory);
+
+			void* data;
+			device.MapMemory(stagingBufferMemory, 0, bufferSize, 0, &data);
+			data[0 .. bufferSize] = indices;
+			device.UnmapMemory(stagingBufferMemory);
+
+			createBuffer(context, bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
+
+			copyBufferSync(context, stagingBuffer, indexBuffer, bufferSize);
+
+			device.DestroyBuffer(stagingBuffer, pAllocator);
+			device.FreeMemory(stagingBufferMemory, pAllocator);
+		}
 	}
 
 	void createCommandPool() {
@@ -525,7 +564,10 @@ class VulkanWindow : Window {
 			device.vkCmdBindVertexBuffers(commandBuffer, 0,
 					cast(uint) vertexBuffers.length, vertexBuffers.ptr, offsets.ptr);
 
-			device.vkCmdDraw(commandBuffer, cast(uint) vertices.length, 1, 0, 0);
+			context.device.vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0,
+					is(typeof(indices[0]) == ushort) ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
+
+			context.device.vkCmdDrawIndexed(commandBuffer, cast(uint) indices.length, 1, 0, 0, 0);
 
 			device.vkCmdEndRenderPass(commandBuffer);
 			device.vkEndCommandBuffer(commandBuffer).enforceVK("vkEndCommandBuffer #" ~ i.to!string);
