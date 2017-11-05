@@ -9,3 +9,5 @@ dependency "erupted" version="~>1.6.10"
 dependency "gl3n" version="~>1.3.1"
 
 subConfiguration "erupted" "with-derelict-loader"
+
+preBuildCommands "cd shaders && ./compile.sh triangle.vert triangle.frag"
