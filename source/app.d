@@ -57,13 +57,16 @@ void main() {
 	w.createImageViews();
 
 	w.createRenderPass();
+	w.createDescriptorSetLayout();
 	w.createGraphicsPipeline();
 
 	w.createFramebuffers();
 
 	w.createCommandPool();
 
-	w.createVertexBuffer();
+	w.createMeshBuffers();
+	w.createDescriptorPool();
+	w.createDescriptorSet();
 
 	w.createCommandBuffers();
 	w.createSemaphores();

@@ -4,6 +4,7 @@ import erupted;
 
 import glfw3d;
 import gl3n.linalg;
+import gl3n.math;
 
 import game.vulkan.context;
 import game.vulkan.mesh;
@@ -11,15 +12,16 @@ import game.vulkan.shader;
 import game.vulkan.wrap;
 
 import std.conv;
+import std.datetime.stopwatch;
 import std.file : readFile = read;
 import std.traits;
 
 //dfmt off
 __gshared Vertex[4] vertices = [
-	Vertex(vec2(-0.5f, -0.5f), vec3(1, 1, 1)),
+	Vertex(vec2(-0.5f, -0.5f), vec3(1, 0, 0)),
 	Vertex(vec2(0.5f, -0.5f), vec3(0, 1, 0)),
 	Vertex(vec2(0.5f, 0.5f), vec3(0, 0, 1)),
-	Vertex(vec2(-0.5f, 0.5f), vec3(1, 1, 1)),
+	Vertex(vec2(-0.5f, 0.5f), vec3(1, 1, 0)),
 ];
 
 __gshared auto verticesSize = vertices.sizeof;
@@ -64,6 +66,18 @@ class VulkanWindow : Window {
 
 		if (swapChain)
 			destroySwapChain();
+
+		if (descriptorPool)
+			device.DestroyDescriptorPool(descriptorPool, pAllocator);
+
+		if (descriptorSetLayout)
+			device.DestroyDescriptorSetLayout(descriptorSetLayout, pAllocator);
+
+		if (uniformBuffer)
+			device.DestroyBuffer(uniformBuffer, pAllocator);
+
+		if (uniformBufferMemory)
+			device.FreeMemory(uniformBufferMemory, pAllocator);
 
 		if (meshBuffer)
 			device.DestroyBuffer(meshBuffer, pAllocator);
@@ -328,6 +342,22 @@ class VulkanWindow : Window {
 			.enforceVK("vkCreateRenderPass");
 	}
 
+	void createDescriptorSetLayout() {
+		VkDescriptorSetLayoutBinding uniformsLayoutBinding;
+		uniformsLayoutBinding.binding = 0;
+		uniformsLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		uniformsLayoutBinding.descriptorCount = 1;
+		uniformsLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+		uniformsLayoutBinding.pImmutableSamplers = null;
+
+		VkDescriptorSetLayoutCreateInfo layoutInfo;
+		layoutInfo.bindingCount = 1;
+		layoutInfo.pBindings = &uniformsLayoutBinding;
+
+		context.device.CreateDescriptorSetLayout(&layoutInfo, pAllocator, &descriptorSetLayout);
+
+	}
+
 	void createGraphicsPipeline() {
 		auto vertShaderModule = context.createShaderModule("shaders/vert.spv");
 		scope (exit)
@@ -386,8 +416,8 @@ class VulkanWindow : Window {
 		rasterizer.rasterizerDiscardEnable = VK_FALSE;
 		rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
 		rasterizer.lineWidth = 1.0f;
-		rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-		rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+		rasterizer.cullMode = VK_CULL_MODE_NONE;
+		rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 		rasterizer.depthBiasEnable = VK_FALSE;
 		rasterizer.depthBiasConstantFactor = 0.0f;
 		rasterizer.depthBiasClamp = 0.0f;
@@ -427,8 +457,8 @@ class VulkanWindow : Window {
 		//dynamicState.pDynamicStates = dynamicStates.ptr;
 
 		VkPipelineLayoutCreateInfo pipelineLayoutInfo;
-		pipelineLayoutInfo.setLayoutCount = 0;
-		pipelineLayoutInfo.pSetLayouts = null;
+		pipelineLayoutInfo.setLayoutCount = 1;
+		pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
 		pipelineLayoutInfo.pushConstantRangeCount = 0;
 		pipelineLayoutInfo.pPushConstantRanges = null;
 
@@ -473,7 +503,7 @@ class VulkanWindow : Window {
 		}
 	}
 
-	void createVertexBuffer() {
+	void createMeshBuffers() {
 		VkDeviceSize meshBufferSize = verticesSize + indicesSize;
 
 		createBuffer(context, meshBufferSize,
@@ -496,6 +526,52 @@ class VulkanWindow : Window {
 
 		device.DestroyBuffer(stagingBuffer, pAllocator);
 		device.FreeMemory(stagingBufferMemory, pAllocator);
+
+		VkDeviceSize uniformBufferSize = UniformBufferObject.sizeof;
+		createBuffer(context, uniformBufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				uniformBuffer, uniformBufferMemory);
+	}
+
+	void createDescriptorPool() {
+		VkDescriptorPoolSize poolSize;
+		poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		poolSize.descriptorCount = 1;
+
+		VkDescriptorPoolCreateInfo poolInfo;
+		poolInfo.poolSizeCount = 1;
+		poolInfo.pPoolSizes = &poolSize;
+		poolInfo.maxSets = 1;
+
+		device.CreateDescriptorPool(&poolInfo, pAllocator, &descriptorPool)
+			.enforceVK("vkCreateDescriptorPool");
+	}
+
+	void createDescriptorSet() {
+		VkDescriptorSetAllocateInfo allocInfo;
+		allocInfo.descriptorPool = descriptorPool;
+		allocInfo.descriptorSetCount = 1;
+		allocInfo.pSetLayouts = &descriptorSetLayout;
+
+		device.AllocateDescriptorSets(&allocInfo, &descriptorSet)
+			.enforceVK("vkAllocateDescriptorSets");
+
+		VkDescriptorBufferInfo bufferInfo;
+		bufferInfo.buffer = uniformBuffer;
+		bufferInfo.offset = 0;
+		bufferInfo.range = UniformBufferObject.sizeof;
+
+		VkWriteDescriptorSet writeDescriptor;
+		writeDescriptor.dstSet = descriptorSet;
+		writeDescriptor.dstBinding = 0;
+		writeDescriptor.dstArrayElement = 0;
+		writeDescriptor.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		writeDescriptor.descriptorCount = 1;
+		writeDescriptor.pBufferInfo = &bufferInfo;
+		writeDescriptor.pImageInfo = null;
+		writeDescriptor.pTexelBufferView = null;
+
+		device.UpdateDescriptorSets(1, &writeDescriptor, 0, null);
 	}
 
 	void createCommandPool() {
@@ -549,6 +625,9 @@ class VulkanWindow : Window {
 			context.device.vkCmdBindIndexBuffer(commandBuffer, meshBuffer, indexOffset,
 					is(typeof(indices[0]) == ushort) ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
 
+			context.device.vkCmdBindDescriptorSets(commandBuffer,
+					VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSet, 0, null);
+
 			context.device.vkCmdDrawIndexed(commandBuffer, cast(uint) indices.length, 1, 0, 0, 0);
 
 			device.vkCmdEndRenderPass(commandBuffer);
@@ -564,7 +643,50 @@ class VulkanWindow : Window {
 			.enforceVK("vkCreateSemaphore renderFinishedSemaphore");
 	}
 
+	StopWatch updateTimer;
+	double time = 0;
+	double fracTime = 0;
+	int frames;
 	void update() {
+		updateTimer.stop();
+		double delta = updateTimer.peek.total!"hnsecs" / 10_000_000.0;
+		updateTimer.reset();
+		updateTimer.start();
+
+		if (delta < 0)
+			delta = 0.001;
+		else if (delta > 1)
+			delta = 1;
+
+		time += delta;
+		fracTime += delta;
+
+		frames++;
+
+		if (fracTime > 1) {
+			import std.stdio;
+			writeln(frames, " fps");
+			frames = 0;
+			fracTime -= 1;
+		}
+
+		UniformBufferObject uniforms;
+		uniforms.model = mat4.zrotation(time * 3.1415926 / 2);
+		uniforms.view = mat4.look_at(vec3(2, 2, 2), vec3(0), vec3(0, 0, 1));
+		uniforms.projection = mat4.perspective(swapChainExtent.width,
+				swapChainExtent.height, 45, 0.1f, 10.0f);
+		uniforms.projection[1][1] *= -1;
+
+		uniforms.model.transpose();
+		uniforms.view.transpose();
+		uniforms.projection.transpose();
+
+		void* data;
+		device.MapMemory(uniformBufferMemory, 0, uniforms.sizeof, 0, &data);
+		(cast(UniformBufferObject*) data)[0] = uniforms;
+		device.UnmapMemory(uniformBufferMemory);
+
+		// TODO: look at push constants
 	}
 
 	void drawFrame() {
@@ -593,7 +715,7 @@ class VulkanWindow : Window {
 
 		VkSemaphore[1] signalSemaphores = [renderFinishedSemaphore];
 		submitInfo.signalSemaphoreCount = cast(uint) signalSemaphores.length;
-		submitInfo.pSignalSemaphores = signalSemaphores.ptr;
+		submitInfo.pSignalSemaphores = &renderFinishedSemaphore;
 
 		device.vkQueueSubmit(graphicsQueue, 1, &submitInfo, null).enforceVK("vkQueueSubmit");
 
@@ -601,9 +723,8 @@ class VulkanWindow : Window {
 		presentInfo.waitSemaphoreCount = cast(uint) signalSemaphores.length;
 		presentInfo.pWaitSemaphores = signalSemaphores.ptr;
 
-		VkSwapchainKHR[1] swapChains = [swapChain];
-		presentInfo.swapchainCount = cast(uint) swapChains.length;
-		presentInfo.pSwapchains = swapChains.ptr;
+		presentInfo.swapchainCount = 1;
+		presentInfo.pSwapchains = &swapChain;
 		presentInfo.pImageIndices = &imageIndex;
 
 		presentInfo.pResults = null;

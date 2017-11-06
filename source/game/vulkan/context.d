@@ -2,6 +2,8 @@ module game.vulkan.context;
 
 import erupted;
 
+import gl3n.linalg;
+
 struct VulkanContext {
 	VkInstance instance;
 	const(VkAllocationCallbacks)* pAllocator;
@@ -14,13 +16,18 @@ struct VulkanContext {
 	VkImageView[] swapChainImageViews;
 	VkFramebuffer[] swapChainFramebuffers;
 	VkRenderPass renderPass;
+	VkDescriptorSetLayout descriptorSetLayout;
 	VkPipelineLayout pipelineLayout;
 	VkPipeline graphicsPipeline;
 	VkCommandPool commandPool;
 	VkCommandBuffer[] commandBuffers;
+	VkDescriptorPool descriptorPool;
+	VkDescriptorSet descriptorSet;
 
 	VkBuffer meshBuffer;
 	VkDeviceMemory meshBufferMemory;
+	VkBuffer uniformBuffer;
+	VkDeviceMemory uniformBufferMemory;
 
 	VkSemaphore imageAvailableSemaphore;
 	VkSemaphore renderFinishedSemaphore;
@@ -38,4 +45,9 @@ struct VulkanContext {
 	uint transferIndex = uint.max;
 
 	VkSurfaceKHR surface;
+}
+
+struct UniformBufferObject {
+	// keep in sync with shaders
+	mat4 model, view, projection;
 }
