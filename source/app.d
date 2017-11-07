@@ -34,6 +34,9 @@ void main() {
 		VkInstanceCreateInfo createInfo;
 		createInfo.pApplicationInfo = &appInfo.info;
 
+		version (Have_derelict_glfw3)
+			DerelictGLFW3_loadVulkan();
+
 		createInfo.fillRequiredInstanceExtensions();
 
 		createInfo.enabledLayerCount = 0;

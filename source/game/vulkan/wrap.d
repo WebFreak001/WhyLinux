@@ -8,6 +8,14 @@ import std.algorithm;
 import std.string;
 import std.typecons;
 
+version (Have_derelict_glfw3) {
+	import derelict.glfw3.glfw3;
+
+	mixin DerelictGLFW3_VulkanBind;
+}
+else
+	import glfw3d : glfwGetRequiredInstanceExtensions;
+
 struct VulkanVersion {
 	uint versionNum;
 	alias versionNum this;
@@ -86,7 +94,6 @@ struct ApplicationInfo {
 }
 
 void fillRequiredInstanceExtensions(ref VkInstanceCreateInfo info, bool validate = true) {
-	import glfw3d : glfwGetRequiredInstanceExtensions;
 	import std.stdio : stderr;
 	import core.stdc.string : strcmp;
 
@@ -324,6 +331,6 @@ void copyBufferSync(ref VulkanContext context, VkBuffer src, VkBuffer dst,
 	submitInfo.commandBufferCount = 1;
 	submitInfo.pCommandBuffers = &commandBuffer;
 
-	context.device.vkQueueSubmit(context.graphicsQueue, 1, &submitInfo, null);
+	context.device.vkQueueSubmit(context.graphicsQueue, 1, &submitInfo, VK_NULL_ND_HANDLE);
 	context.device.vkQueueWaitIdle(context.graphicsQueue);
 }

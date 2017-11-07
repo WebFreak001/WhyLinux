@@ -261,7 +261,7 @@ class VulkanWindow : Window {
 		createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR; // change to make window transparent
 		createInfo.presentMode = presentMode;
 		createInfo.clipped = VK_TRUE; // change to false for screenshots
-		createInfo.oldSwapchain = null; // TODO: for recreation of swapchain
+		createInfo.oldSwapchain = VK_NULL_ND_HANDLE; // TODO: for recreation of swapchain
 
 		device.vkCreateSwapchainKHR(device.vkDevice, &createInfo, pAllocator,
 				&swapChain).enforceVK("vkCreateSwapchainKHR");
@@ -479,10 +479,10 @@ class VulkanWindow : Window {
 		pipelineInfo.layout = pipelineLayout;
 		pipelineInfo.renderPass = renderPass;
 		pipelineInfo.subpass = 0;
-		pipelineInfo.basePipelineHandle = null;
+		pipelineInfo.basePipelineHandle = VK_NULL_ND_HANDLE;
 		pipelineInfo.basePipelineIndex = -1;
 
-		device.CreateGraphicsPipelines(null, 1, &pipelineInfo, pAllocator,
+		device.CreateGraphicsPipelines(VK_NULL_ND_HANDLE, 1, &pipelineInfo, pAllocator,
 				&graphicsPipeline).enforceVK("vkCreateGraphicsPipelines");
 	}
 
@@ -696,7 +696,7 @@ class VulkanWindow : Window {
 
 		uint imageIndex;
 		auto result = device.vkAcquireNextImageKHR(device.vkDevice, swapChain,
-				ulong.max, imageAvailableSemaphore, null, &imageIndex);
+				ulong.max, imageAvailableSemaphore, VK_NULL_ND_HANDLE, &imageIndex);
 
 		if (result == VK_ERROR_OUT_OF_DATE_KHR)
 			return recreateSwapChain();
@@ -717,7 +717,7 @@ class VulkanWindow : Window {
 		submitInfo.signalSemaphoreCount = cast(uint) signalSemaphores.length;
 		submitInfo.pSignalSemaphores = &renderFinishedSemaphore;
 
-		device.vkQueueSubmit(graphicsQueue, 1, &submitInfo, null).enforceVK("vkQueueSubmit");
+		device.vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_ND_HANDLE).enforceVK("vkQueueSubmit");
 
 		VkPresentInfoKHR presentInfo;
 		presentInfo.waitSemaphoreCount = cast(uint) signalSemaphores.length;
