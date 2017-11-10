@@ -64,9 +64,9 @@ void main() {
 	w.createDescriptorSetLayout();
 	w.createGraphicsPipeline();
 
-	w.createFramebuffers();
-
 	w.createCommandPool();
+	w.createDepthResources();
+	w.createFramebuffers();
 
 	w.createTextures();
 	w.createMeshBuffers();

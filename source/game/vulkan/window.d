@@ -17,17 +17,23 @@ import std.file : readFile = read;
 import std.traits;
 
 //dfmt off
-__gshared Vertex[4] vertices = [
-	Vertex(vec2(-0.5f, -0.5f), vec3(1, 0, 0), vec2(1, 0)),
-	Vertex(vec2(0.5f, -0.5f), vec3(0, 1, 0), vec2(0, 0)),
-	Vertex(vec2(0.5f, 0.5f), vec3(0, 0, 1), vec2(0, 1)),
-	Vertex(vec2(-0.5f, 0.5f), vec3(1, 1, 0), vec2(1, 1)),
+__gshared Vertex[8] vertices = [
+	Vertex(vec3(-0.5f, -0.5f, 0), vec3(1, 0, 0), vec2(1, 0)),
+	Vertex(vec3(0.5f, -0.5f, 0), vec3(0, 1, 0), vec2(0, 0)),
+	Vertex(vec3(0.5f, 0.5f, 0), vec3(0, 0, 1), vec2(0, 1)),
+	Vertex(vec3(-0.5f, 0.5f, 0), vec3(1, 1, 0), vec2(1, 1)),
+
+	Vertex(vec3(-0.5f, -0.5f, -0.5f), vec3(1, 0, 0), vec2(1, 0)),
+	Vertex(vec3(0.5f, -0.5f, -0.5f), vec3(0, 1, 0), vec2(0, 0)),
+	Vertex(vec3(0.5f, 0.5f, -0.5f), vec3(0, 0, 1), vec2(0, 1)),
+	Vertex(vec3(-0.5f, 0.5f, -0.5f), vec3(1, 1, 0), vec2(1, 1)),
 ];
 
 __gshared auto verticesSize = vertices.sizeof;
 
-__gshared ushort[6] indices = [
-	0, 1, 2, 2, 3, 0
+__gshared ushort[12] indices = [
+	0, 1, 2, 2, 3, 0,
+	4, 5, 6, 6, 7, 4,
 ];
 
 __gshared auto indicesSize = indices.sizeof;
@@ -119,6 +125,15 @@ class VulkanWindow : Window {
 	}
 
 	void destroySwapChain() {
+		if (depthImageView)
+			device.DestroyImageView(depthImageView, pAllocator);
+
+		if (depthImage)
+			device.DestroyImage(depthImage, pAllocator);
+
+		if (depthImageMemory)
+			device.FreeMemory(depthImageMemory, pAllocator);
+
 		foreach (ref fb; swapChainFramebuffers)
 			device.DestroyFramebuffer(fb, pAllocator);
 
@@ -231,6 +246,7 @@ class VulkanWindow : Window {
 		createImageViews();
 		createRenderPass();
 		createGraphicsPipeline();
+		createDepthResources();
 		createFramebuffers();
 		createCommandBuffers();
 	}
@@ -312,16 +328,27 @@ class VulkanWindow : Window {
 		colorAttachmentRef.attachment = 0;
 		colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
+		VkAttachmentDescription depthAttachment;
+		depthAttachment.format = context.findDepthFormat;
+		depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+		depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+		depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+		VkAttachmentReference depthAttachmentRef;
+		depthAttachmentRef.attachment = 1;
+		depthAttachmentRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
 		VkSubpassDescription subpass;
 		subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
 		subpass.colorAttachmentCount = 1;
 		subpass.pColorAttachments = &colorAttachmentRef;
+		subpass.pDepthStencilAttachment = &depthAttachmentRef;
 
-		VkRenderPassCreateInfo renderPassInfo;
-		renderPassInfo.attachmentCount = 1;
-		renderPassInfo.pAttachments = &colorAttachment;
-		renderPassInfo.subpassCount = 1;
-		renderPassInfo.pSubpasses = &subpass;
+		VkAttachmentDescription[2] attachments = [colorAttachment, depthAttachment];
 
 		VkSubpassDependency subpassDependency;
 		subpassDependency.srcSubpass = VK_SUBPASS_EXTERNAL;
@@ -332,6 +359,11 @@ class VulkanWindow : Window {
 		subpassDependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT
 			| VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
+		VkRenderPassCreateInfo renderPassInfo;
+		renderPassInfo.attachmentCount = cast(uint) attachments.length;
+		renderPassInfo.pAttachments = attachments.ptr;
+		renderPassInfo.subpassCount = 1;
+		renderPassInfo.pSubpasses = &subpass;
 		renderPassInfo.dependencyCount = 1;
 		renderPassInfo.pDependencies = &subpassDependency;
 
@@ -437,7 +469,14 @@ class VulkanWindow : Window {
 		multisampling.alphaToCoverageEnable = VK_FALSE;
 		multisampling.alphaToOneEnable = VK_FALSE;
 
-		// TODO: VkPipelineDepthStencilStateCreateInfo for 3D
+		VkPipelineDepthStencilStateCreateInfo depthStencil;
+		depthStencil.depthTestEnable = VK_TRUE;
+		depthStencil.depthWriteEnable = VK_TRUE;
+		depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+		depthStencil.depthBoundsTestEnable = VK_FALSE;
+		depthStencil.minDepthBounds = 0.0f;
+		depthStencil.maxDepthBounds = 0.0f;
+		depthStencil.stencilTestEnable = VK_FALSE;
 
 		VkPipelineColorBlendAttachmentState colorBlendAttachment;
 		colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_A_BIT
@@ -479,7 +518,7 @@ class VulkanWindow : Window {
 		pipelineInfo.pViewportState = &viewportState;
 		pipelineInfo.pRasterizationState = &rasterizer;
 		pipelineInfo.pMultisampleState = &multisampling;
-		pipelineInfo.pDepthStencilState = null;
+		pipelineInfo.pDepthStencilState = &depthStencil;
 		pipelineInfo.pColorBlendState = &colorBlending;
 		pipelineInfo.pDynamicState = null;
 		pipelineInfo.layout = pipelineLayout;
@@ -496,10 +535,12 @@ class VulkanWindow : Window {
 		swapChainFramebuffers.length = swapChainImageViews.length;
 
 		foreach (i, ref view; swapChainImageViews) {
+			VkImageView[2] attachments = [view, depthImageView];
+
 			VkFramebufferCreateInfo framebufferInfo;
 			framebufferInfo.renderPass = renderPass;
-			framebufferInfo.attachmentCount = 1;
-			framebufferInfo.pAttachments = &view;
+			framebufferInfo.attachmentCount = cast(uint) attachments.length;
+			framebufferInfo.pAttachments = attachments.ptr;
 			framebufferInfo.width = swapChainExtent.width;
 			framebufferInfo.height = swapChainExtent.height;
 			framebufferInfo.layers = 1;
@@ -650,6 +691,16 @@ class VulkanWindow : Window {
 			.enforceVK("vkCreateCommandPool");
 	}
 
+	void createDepthResources() {
+		VkFormat depthFormat = context.findDepthFormat;
+		context.createImage(swapChainExtent.width, swapChainExtent.height, depthFormat, VK_IMAGE_TILING_OPTIMAL,
+				VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, depthImage, depthImageMemory);
+		depthImageView = context.createImageView(depthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
+		context.transitionImageLayout(depthImage, depthFormat,
+				VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+	}
+
 	void createCommandBuffers() {
 		commandBuffers.length = swapChainFramebuffers.length;
 
@@ -674,14 +725,15 @@ class VulkanWindow : Window {
 			renderPassInfo.renderArea.offset = VkOffset2D(0, 0);
 			renderPassInfo.renderArea.extent = swapChainExtent;
 
-			VkClearValue clearColor;
-			clearColor.color.float32[0] = 0;
-			clearColor.color.float32[1] = 0;
-			clearColor.color.float32[2] = 0;
-			clearColor.color.float32[3] = 1.0f;
+			VkClearValue[2] clearValues;
+			clearValues[0].color.float32[0] = 0;
+			clearValues[0].color.float32[1] = 0;
+			clearValues[0].color.float32[2] = 0;
+			clearValues[0].color.float32[3] = 1.0f;
+			clearValues[1].depthStencil = VkClearDepthStencilValue(1.0f, 0);
 
-			renderPassInfo.clearValueCount = 1;
-			renderPassInfo.pClearValues = &clearColor;
+			renderPassInfo.clearValueCount = cast(uint) clearValues.length;
+			renderPassInfo.pClearValues = clearValues.ptr;
 
 			device.vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 			device.vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);

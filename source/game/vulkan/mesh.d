@@ -5,7 +5,7 @@ import erupted;
 import gl3n.linalg;
 
 struct Vertex {
-	vec2 pos;
+	vec3 pos;
 	vec3 color;
 	vec2 texCoord;
 
@@ -22,7 +22,7 @@ struct Vertex {
 
 		ret[0].binding = 0;
 		ret[0].location = 0;
-		ret[0].format = VK_FORMAT_R32G32_SFLOAT;
+		ret[0].format = VK_FORMAT_R32G32B32_SFLOAT;
 		ret[0].offset = 0;
 
 		ret[1].binding = 0;

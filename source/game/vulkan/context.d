@@ -14,6 +14,9 @@ struct VulkanContext {
 	VkExtent2D swapChainExtent;
 	VkImage[] swapChainImages;
 	VkImageView[] swapChainImageViews;
+	VkImage depthImage;
+	VkImageView depthImageView;
+	VkDeviceMemory depthImageMemory;
 	VkFramebuffer[] swapChainFramebuffers;
 	VkRenderPass renderPass;
 	VkDescriptorSetLayout descriptorSetLayout;
