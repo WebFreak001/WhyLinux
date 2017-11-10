@@ -7,6 +7,7 @@ import erupted;
 import std.algorithm;
 import std.string;
 import std.typecons;
+import std.traits;
 
 version (Have_derelict_glfw3) {
 	import derelict.glfw3.glfw3;
@@ -302,8 +303,14 @@ void createBuffer(ref VulkanContext context, VkDeviceSize size, VkBufferUsageFla
 	context.device.BindBufferMemory(buffer, bufferMemory, 0);
 }
 
-void copyBufferSync(ref VulkanContext context, VkBuffer src, VkBuffer dst,
-		VkDeviceSize size, VkDeviceSize srcOffset = 0, VkDeviceSize dstOffset = 0) {
+void createTransferSrcBuffer(ref VulkanContext context, VkDeviceSize size,
+		ref VkBuffer buffer, ref VkDeviceMemory bufferMemory) {
+	createBuffer(context, size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			buffer, bufferMemory);
+}
+
+VkCommandBuffer beginSingleTimeCommands(ref VulkanContext context) {
 	VkCommandBufferAllocateInfo allocInfo;
 	allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 	allocInfo.commandPool = context.commandPool;
@@ -316,15 +323,11 @@ void copyBufferSync(ref VulkanContext context, VkBuffer src, VkBuffer dst,
 	beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
 	context.device.vkBeginCommandBuffer(commandBuffer, &beginInfo);
-	scope (exit)
-		context.device.FreeCommandBuffers(context.commandPool, 1, &commandBuffer);
 
-	VkBufferCopy copyRegion;
-	copyRegion.srcOffset = srcOffset;
-	copyRegion.dstOffset = dstOffset;
-	copyRegion.size = size;
-	context.device.vkCmdCopyBuffer(commandBuffer, src, dst, 1, &copyRegion);
+	return commandBuffer;
+}
 
+void endSingleTimeCommands(ref VulkanContext context, ref VkCommandBuffer commandBuffer) {
 	context.device.vkEndCommandBuffer(commandBuffer);
 
 	VkSubmitInfo submitInfo;
@@ -333,4 +336,160 @@ void copyBufferSync(ref VulkanContext context, VkBuffer src, VkBuffer dst,
 
 	context.device.vkQueueSubmit(context.graphicsQueue, 1, &submitInfo, VK_NULL_ND_HANDLE);
 	context.device.vkQueueWaitIdle(context.graphicsQueue);
+
+	context.device.FreeCommandBuffers(context.commandPool, 1, &commandBuffer);
+}
+
+void copyBufferSync(ref VulkanContext context, VkBuffer src, VkBuffer dst,
+		VkDeviceSize size, VkDeviceSize srcOffset = 0, VkDeviceSize dstOffset = 0) {
+	auto commandBuffer = context.beginSingleTimeCommands();
+	scope (exit)
+		context.endSingleTimeCommands(commandBuffer);
+
+	VkBufferCopy copyRegion;
+	copyRegion.srcOffset = srcOffset;
+	copyRegion.dstOffset = dstOffset;
+	copyRegion.size = size;
+	context.device.vkCmdCopyBuffer(commandBuffer, src, dst, 1, &copyRegion);
+}
+
+void transitionImageLayout(ref VulkanContext context, VkImage image,
+		VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout) {
+	auto commandBuffer = context.beginSingleTimeCommands();
+	scope (exit)
+		context.endSingleTimeCommands(commandBuffer);
+
+	VkImageMemoryBarrier barrier;
+	barrier.oldLayout = oldLayout;
+	barrier.newLayout = newLayout;
+	barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.image = image;
+	barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	barrier.subresourceRange.baseMipLevel = 0;
+	barrier.subresourceRange.levelCount = 1;
+	barrier.subresourceRange.baseArrayLayer = 0;
+	barrier.subresourceRange.layerCount = 1;
+
+	VkPipelineStageFlags sourceStage;
+	VkPipelineStageFlags destinationStage;
+
+	if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+		barrier.srcAccessMask = 0;
+		barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+		sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+		destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+	}
+	else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+			&& newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+		barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+		sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+	}
+	else
+		throw new Exception("Invalid transition arguments");
+
+	context.device.vkCmdPipelineBarrier(commandBuffer, sourceStage,
+			destinationStage, 0, 0, null, 0, null, 1, &barrier);
+}
+
+void copyBufferToImage(ref VulkanContext context, VkBuffer buffer, VkImage image,
+		uint width, uint height, VkDeviceSize bufferOffset = 0) {
+	auto commandBuffer = context.beginSingleTimeCommands();
+	scope (exit)
+		context.endSingleTimeCommands(commandBuffer);
+
+	VkBufferImageCopy region;
+	region.bufferOffset = bufferOffset;
+	region.bufferRowLength = 0;
+	region.bufferImageHeight = 0;
+
+	region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	region.imageSubresource.mipLevel = 0;
+	region.imageSubresource.baseArrayLayer = 0;
+	region.imageSubresource.layerCount = 1;
+
+	region.imageOffset = VkOffset3D(0, 0, 0);
+	region.imageExtent = VkExtent3D(width, height, 1);
+
+	context.device.vkCmdCopyBufferToImage(commandBuffer, buffer, image,
+			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+}
+
+void fillGPUMemory(alias fn)(ref VulkanContext context, VkDeviceMemory memory,
+		VkDeviceSize size, VkDeviceSize offset = 0) {
+	void* data;
+	context.device.MapMemory(memory, offset, size, 0, &data);
+	fn(data[0 .. size]);
+	context.device.UnmapMemory(memory);
+}
+
+void fillGPUMemory(ref VulkanContext context, VkDeviceMemory memory,
+		VkDeviceSize offset, void[] data) {
+	void* gpu;
+	context.device.MapMemory(memory, offset, cast(VkDeviceSize) data.length, 0, &gpu);
+	gpu[0 .. data.length] = data;
+	context.device.UnmapMemory(memory);
+}
+
+void fillGPUMemory(T)(ref VulkanContext context, VkDeviceMemory memory, VkDeviceSize offset, T data)
+		if (!isDynamicArray!T) {
+	void* gpu;
+	context.device.MapMemory(memory, offset, cast(VkDeviceSize) T.sizeof, 0, &gpu);
+	*(cast(T*) gpu) = data;
+	context.device.UnmapMemory(memory);
+}
+
+void createImage(ref VulkanContext context, uint width, uint height,
+		VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage,
+		VkMemoryPropertyFlags properties, ref VkImage image, ref VkDeviceMemory imageMemory) {
+	VkImageCreateInfo imageInfo;
+	imageInfo.imageType = VK_IMAGE_TYPE_2D;
+	imageInfo.extent.width = width;
+	imageInfo.extent.height = height;
+	imageInfo.extent.depth = 1;
+	imageInfo.mipLevels = 1;
+	imageInfo.arrayLayers = 1;
+	imageInfo.format = format;
+	imageInfo.tiling = tiling;
+	imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	imageInfo.usage = usage;
+	imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+	imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+
+	context.device.CreateImage(&imageInfo, context.pAllocator, &image).enforceVK("vkCreateImage");
+
+	VkMemoryRequirements memRequirements;
+	context.device.GetImageMemoryRequirements(image, &memRequirements);
+
+	VkMemoryAllocateInfo allocInfo;
+	allocInfo.allocationSize = memRequirements.size;
+	allocInfo.memoryTypeIndex = findMemoryType(context.physicalDevice,
+			memRequirements.memoryTypeBits, properties);
+
+	context.device.AllocateMemory(&allocInfo, context.pAllocator, &imageMemory)
+		.enforceVK("vkAllocateMemory");
+
+	context.device.BindImageMemory(image, imageMemory, 0);
+}
+
+VkImageView createImageView(ref VulkanContext context, VkImage image, VkFormat format) {
+	VkImageViewCreateInfo viewInfo;
+	viewInfo.image = image;
+	viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+	viewInfo.format = format;
+
+	viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	viewInfo.subresourceRange.baseMipLevel = 0;
+	viewInfo.subresourceRange.levelCount = 1;
+	viewInfo.subresourceRange.baseArrayLayer = 0;
+	viewInfo.subresourceRange.layerCount = 1;
+
+	VkImageView imageView;
+	context.device.CreateImageView(&viewInfo, context.pAllocator, &imageView).enforceVK("vkCreateImageView");
+
+	return imageView;
 }

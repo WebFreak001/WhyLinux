@@ -7,6 +7,7 @@ license "GPL-3.0"
 dependency "glfw3d" path="glfw3d"
 dependency "erupted" version="~>1.6.10"
 dependency "gl3n" version="~>1.3.1"
+dependency "imageformats" version="~>6.1.2"
 
 subConfiguration "erupted" "with-derelict-loader"
 

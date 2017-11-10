@@ -23,11 +23,16 @@ struct VulkanContext {
 	VkCommandBuffer[] commandBuffers;
 	VkDescriptorPool descriptorPool;
 	VkDescriptorSet descriptorSet;
+	VkPhysicalDeviceFeatures deviceFeatures;
 
 	VkBuffer meshBuffer;
 	VkDeviceMemory meshBufferMemory;
 	VkBuffer uniformBuffer;
 	VkDeviceMemory uniformBufferMemory;
+	VkImage textureImage;
+	VkImageView textureImageView;
+	VkSampler textureSampler;
+	VkDeviceMemory textureImageMemory;
 
 	VkSemaphore imageAvailableSemaphore;
 	VkSemaphore renderFinishedSemaphore;

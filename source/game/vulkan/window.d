@@ -18,10 +18,10 @@ import std.traits;
 
 //dfmt off
 __gshared Vertex[4] vertices = [
-	Vertex(vec2(-0.5f, -0.5f), vec3(1, 0, 0)),
-	Vertex(vec2(0.5f, -0.5f), vec3(0, 1, 0)),
-	Vertex(vec2(0.5f, 0.5f), vec3(0, 0, 1)),
-	Vertex(vec2(-0.5f, 0.5f), vec3(1, 1, 0)),
+	Vertex(vec2(-0.5f, -0.5f), vec3(1, 0, 0), vec2(1, 0)),
+	Vertex(vec2(0.5f, -0.5f), vec3(0, 1, 0), vec2(0, 0)),
+	Vertex(vec2(0.5f, 0.5f), vec3(0, 0, 1), vec2(0, 1)),
+	Vertex(vec2(-0.5f, 0.5f), vec3(1, 1, 0), vec2(1, 1)),
 ];
 
 __gshared auto verticesSize = vertices.sizeof;
@@ -66,6 +66,18 @@ class VulkanWindow : Window {
 
 		if (swapChain)
 			destroySwapChain();
+
+		if (textureSampler)
+			device.DestroySampler(textureSampler, pAllocator);
+
+		if (textureImageView)
+			device.DestroyImageView(textureImageView, pAllocator);
+
+		if (textureImage)
+			device.DestroyImage(textureImage, pAllocator);
+
+		if (textureImageMemory)
+			device.FreeMemory(textureImageMemory, pAllocator);
 
 		if (descriptorPool)
 			device.DestroyDescriptorPool(descriptorPool, pAllocator);
@@ -179,6 +191,8 @@ class VulkanWindow : Window {
 		createInfoBase.pQueueCreateInfos = queueCreateInfos.ptr;
 		createInfoBase.queueCreateInfoCount = queueCreateInfos.length;
 
+		vkGetPhysicalDeviceFeatures(physicalDevice, &deviceFeatures);
+
 		VkDevice vkdev;
 		vkCreateDevice(physicalDevice, &createInfoBase, pAllocator, &vkdev).enforceVK("vkCreateDevice");
 
@@ -279,24 +293,7 @@ class VulkanWindow : Window {
 		swapChainImageViews.length = swapChainImages.length;
 
 		foreach (i, ref image; swapChainImages) {
-			VkImageViewCreateInfo createInfo;
-			createInfo.image = image;
-			createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-			createInfo.format = swapChainImageFormat;
-
-			createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-			createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-			createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-			createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY; // maybe put one here?
-
-			createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; // create multiple layers for stereographic 3D
-			createInfo.subresourceRange.baseMipLevel = 0;
-			createInfo.subresourceRange.levelCount = 1;
-			createInfo.subresourceRange.baseArrayLayer = 0;
-			createInfo.subresourceRange.layerCount = 1;
-
-			device.CreateImageView(&createInfo, pAllocator,
-					&swapChainImageViews[i]).enforceVK("vkCreateImageView #" ~ i.to!string);
+			swapChainImageViews[i] = context.createImageView(image, swapChainImageFormat);
 		}
 	}
 
@@ -350,9 +347,18 @@ class VulkanWindow : Window {
 		uniformsLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
 		uniformsLayoutBinding.pImmutableSamplers = null;
 
+		VkDescriptorSetLayoutBinding samplerLayoutBinding;
+		samplerLayoutBinding.binding = 1;
+		samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		samplerLayoutBinding.descriptorCount = 1;
+		samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+		samplerLayoutBinding.pImmutableSamplers = null;
+
+		VkDescriptorSetLayoutBinding[2] bindings = [uniformsLayoutBinding, samplerLayoutBinding];
+
 		VkDescriptorSetLayoutCreateInfo layoutInfo;
-		layoutInfo.bindingCount = 1;
-		layoutInfo.pBindings = &uniformsLayoutBinding;
+		layoutInfo.bindingCount = cast(uint) bindings.length;
+		layoutInfo.pBindings = bindings.ptr;
 
 		context.device.CreateDescriptorSetLayout(&layoutInfo, pAllocator, &descriptorSetLayout);
 
@@ -482,8 +488,8 @@ class VulkanWindow : Window {
 		pipelineInfo.basePipelineHandle = VK_NULL_ND_HANDLE;
 		pipelineInfo.basePipelineIndex = -1;
 
-		device.CreateGraphicsPipelines(VK_NULL_ND_HANDLE, 1, &pipelineInfo, pAllocator,
-				&graphicsPipeline).enforceVK("vkCreateGraphicsPipelines");
+		device.CreateGraphicsPipelines(VK_NULL_ND_HANDLE, 1, &pipelineInfo,
+				pAllocator, &graphicsPipeline).enforceVK("vkCreateGraphicsPipelines");
 	}
 
 	void createFramebuffers() {
@@ -503,6 +509,58 @@ class VulkanWindow : Window {
 		}
 	}
 
+	void createTextures() {
+		import imageformats;
+
+		auto image = read_image("textures/dman.jpg", ColFmt.RGBA);
+
+		VkDeviceSize imageSize = image.w * image.h * 4;
+
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
+		context.createTransferSrcBuffer(imageSize, stagingBuffer, stagingBufferMemory);
+		context.fillGPUMemory(stagingBufferMemory, 0, image.pixels);
+
+		context.createImage(image.w, image.h, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL,
+				VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textureImage, textureImageMemory);
+
+		context.transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_UNORM,
+				VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+		context.copyBufferToImage(stagingBuffer, textureImage, image.w, image.h);
+		context.transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_UNORM,
+				VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+		device.DestroyBuffer(stagingBuffer, pAllocator);
+		device.FreeMemory(stagingBufferMemory, pAllocator);
+
+		textureImageView = context.createImageView(textureImage, VK_FORMAT_R8G8B8A8_UNORM);
+
+		VkSamplerCreateInfo samplerInfo;
+		samplerInfo.magFilter = VK_FILTER_LINEAR;
+		samplerInfo.minFilter = VK_FILTER_LINEAR;
+		samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+		samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+		samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+		if (deviceFeatures.samplerAnisotropy) {
+			samplerInfo.anisotropyEnable = VK_TRUE;
+			samplerInfo.maxAnisotropy = 16;
+		}
+		else {
+			samplerInfo.anisotropyEnable = VK_FALSE;
+			samplerInfo.maxAnisotropy = 1;
+		}
+		samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+		samplerInfo.unnormalizedCoordinates = VK_FALSE;
+		samplerInfo.compareEnable = VK_FALSE;
+		samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+		samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+		samplerInfo.mipLodBias = 0.0f;
+		samplerInfo.minLod = 0.0f;
+		samplerInfo.maxLod = 0.0f;
+		device.CreateSampler(&samplerInfo, pAllocator, &textureSampler).enforceVK("vkCreateSampler");
+	}
+
 	void createMeshBuffers() {
 		VkDeviceSize meshBufferSize = verticesSize + indicesSize;
 
@@ -512,15 +570,12 @@ class VulkanWindow : Window {
 
 		VkBuffer stagingBuffer;
 		VkDeviceMemory stagingBufferMemory;
-		createBuffer(context, meshBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-				stagingBuffer, stagingBufferMemory);
+		context.createTransferSrcBuffer(meshBufferSize, stagingBuffer, stagingBufferMemory);
 
-		void* data;
-		device.MapMemory(stagingBufferMemory, 0, meshBufferSize, 0, &data);
-		data[0 .. verticesSize] = cast(void[]) vertices;
-		data[verticesSize .. verticesSize + indicesSize] = cast(void[]) indices;
-		device.UnmapMemory(stagingBufferMemory);
+		context.fillGPUMemory!((void[] data) {
+			data[0 .. verticesSize] = cast(void[]) vertices;
+			data[verticesSize .. verticesSize + indicesSize] = cast(void[]) indices;
+		})(stagingBufferMemory, meshBufferSize);
 
 		copyBufferSync(context, stagingBuffer, meshBuffer, meshBufferSize);
 
@@ -534,13 +589,15 @@ class VulkanWindow : Window {
 	}
 
 	void createDescriptorPool() {
-		VkDescriptorPoolSize poolSize;
-		poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-		poolSize.descriptorCount = 1;
+		VkDescriptorPoolSize[2] poolSizes;
+		poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		poolSizes[0].descriptorCount = 1;
+		poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		poolSizes[1].descriptorCount = 1;
 
 		VkDescriptorPoolCreateInfo poolInfo;
-		poolInfo.poolSizeCount = 1;
-		poolInfo.pPoolSizes = &poolSize;
+		poolInfo.poolSizeCount = cast(uint) poolSizes.length;
+		poolInfo.pPoolSizes = poolSizes.ptr;
 		poolInfo.maxSets = 1;
 
 		device.CreateDescriptorPool(&poolInfo, pAllocator, &descriptorPool)
@@ -561,17 +618,28 @@ class VulkanWindow : Window {
 		bufferInfo.offset = 0;
 		bufferInfo.range = UniformBufferObject.sizeof;
 
-		VkWriteDescriptorSet writeDescriptor;
-		writeDescriptor.dstSet = descriptorSet;
-		writeDescriptor.dstBinding = 0;
-		writeDescriptor.dstArrayElement = 0;
-		writeDescriptor.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-		writeDescriptor.descriptorCount = 1;
-		writeDescriptor.pBufferInfo = &bufferInfo;
-		writeDescriptor.pImageInfo = null;
-		writeDescriptor.pTexelBufferView = null;
+		VkDescriptorImageInfo imageInfo;
+		imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		imageInfo.imageView = textureImageView;
+		imageInfo.sampler = textureSampler;
 
-		device.UpdateDescriptorSets(1, &writeDescriptor, 0, null);
+		VkWriteDescriptorSet[2] writeDescriptors;
+
+		writeDescriptors[0].dstSet = descriptorSet;
+		writeDescriptors[0].dstBinding = 0;
+		writeDescriptors[0].dstArrayElement = 0;
+		writeDescriptors[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		writeDescriptors[0].descriptorCount = 1;
+		writeDescriptors[0].pBufferInfo = &bufferInfo;
+
+		writeDescriptors[1].dstSet = descriptorSet;
+		writeDescriptors[1].dstBinding = 1;
+		writeDescriptors[1].dstArrayElement = 0;
+		writeDescriptors[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		writeDescriptors[1].descriptorCount = 1;
+		writeDescriptors[1].pImageInfo = &imageInfo;
+
+		device.UpdateDescriptorSets(cast(uint) writeDescriptors.length, writeDescriptors.ptr, 0, null);
 	}
 
 	void createCommandPool() {
@@ -665,6 +733,7 @@ class VulkanWindow : Window {
 
 		if (fracTime > 1) {
 			import std.stdio;
+
 			writeln(frames, " fps");
 			frames = 0;
 			fracTime -= 1;
@@ -681,10 +750,7 @@ class VulkanWindow : Window {
 		uniforms.view.transpose();
 		uniforms.projection.transpose();
 
-		void* data;
-		device.MapMemory(uniformBufferMemory, 0, uniforms.sizeof, 0, &data);
-		(cast(UniformBufferObject*) data)[0] = uniforms;
-		device.UnmapMemory(uniformBufferMemory);
+		context.fillGPUMemory(uniformBufferMemory, 0, uniforms);
 
 		// TODO: look at push constants
 	}
@@ -717,7 +783,8 @@ class VulkanWindow : Window {
 		submitInfo.signalSemaphoreCount = cast(uint) signalSemaphores.length;
 		submitInfo.pSignalSemaphores = &renderFinishedSemaphore;
 
-		device.vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_ND_HANDLE).enforceVK("vkQueueSubmit");
+		device.vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_ND_HANDLE)
+			.enforceVK("vkQueueSubmit");
 
 		VkPresentInfoKHR presentInfo;
 		presentInfo.waitSemaphoreCount = cast(uint) signalSemaphores.length;

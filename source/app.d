@@ -50,6 +50,7 @@ void main() {
 	VkDeviceCreateInfo createInfo;
 
 	VkPhysicalDeviceFeatures deviceFeatures;
+	deviceFeatures.samplerAnisotropy = VK_TRUE;
 	createInfo.pEnabledFeatures = &deviceFeatures;
 
 	createInfo.enabledExtensionCount = cast(uint) deviceExtensions.length;
@@ -67,6 +68,7 @@ void main() {
 
 	w.createCommandPool();
 
+	w.createTextures();
 	w.createMeshBuffers();
 	w.createDescriptorPool();
 	w.createDescriptorSet();
@@ -96,7 +98,7 @@ extern (C) nothrow void onWindowResized(GLFWwindow* window, int width, int heigh
 }
 
 int rateDevice(VkSurfaceKHR surface, VkPhysicalDevice device,
-		VkPhysicalDeviceProperties props, VkPhysicalDeviceFeatures) {
+		VkPhysicalDeviceProperties props, VkPhysicalDeviceFeatures features) {
 	int score = 1;
 	if (props.deviceType == VkPhysicalDeviceType.VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
 		score += 1000;
@@ -122,6 +124,8 @@ int rateDevice(VkSurfaceKHR surface, VkPhysicalDevice device,
 		return 0;
 	if (!swapChainSupport.presentModes.length)
 		return 0;
+	if (!features.samplerAnisotropy)
+		score /= 4;
 
 	return score;
 }
