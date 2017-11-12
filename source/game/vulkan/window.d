@@ -332,8 +332,8 @@ class VulkanWindow : Window {
 
 		VkPipelineShaderStageCreateInfo[2] shaderStages = [vertShaderStageInfo, fragShaderStageInfo];
 
-		auto bindingDescription = Vertex.bindingDescription;
-		auto attributeDescriptions = Vertex.attributeDescriptions;
+		auto bindingDescription = PositionNormalTexCoordVertex.bindingDescription;
+		auto attributeDescriptions = PositionNormalTexCoordVertex.attributeDescriptions;
 
 		VkPipelineVertexInputStateCreateInfo vertexInputInfo;
 		vertexInputInfo.vertexBindingDescriptionCount = 1;
@@ -522,7 +522,7 @@ class VulkanWindow : Window {
 		context.disposer.register!"DestroySampler"(textureSampler);
 	}
 
-	Vertex[] vertices = [];
+	PositionNormalTexCoordVertex[] vertices;
 	size_t verticesSize;
 	ushort[] indices;
 	size_t indicesSize;
@@ -597,7 +597,7 @@ class VulkanWindow : Window {
 					auto existing = addedVerts.countUntil(index);
 					if (existing == -1) {
 						indices ~= cast(ushort) vertices.length;
-						vertices ~= Vertex(vecPool[i1 - 1], nrmPool[i3 - 1], texPool[i2 - 1]);
+						vertices ~= PositionNormalTexCoordVertex(vecPool[i1 - 1], nrmPool[i3 - 1], texPool[i2 - 1]);
 					}
 					else {
 						indices ~= cast(ushort) existing;
@@ -606,7 +606,7 @@ class VulkanWindow : Window {
 			}
 		}
 
-		verticesSize = vertices.length * Vertex.sizeof;
+		verticesSize = vertices.length * PositionNormalTexCoordVertex.sizeof;
 		indicesSize = indices.length * ushort.sizeof;
 	}
 
