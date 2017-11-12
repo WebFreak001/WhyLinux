@@ -7,6 +7,7 @@ import gl3n.linalg;
 import gl3n.math;
 
 import game.vulkan.context;
+import game.vulkan.disposer;
 import game.vulkan.mesh;
 import game.vulkan.shader;
 import game.vulkan.wrap;
@@ -15,7 +16,6 @@ import std.conv;
 import std.datetime.stopwatch;
 import std.file : readFile = read;
 import std.traits;
-
 
 /// Callback for rating a device. Return <=0 if unsuitable
 alias DeviceScoreFn = int function(VkSurfaceKHR, VkPhysicalDevice,
@@ -39,99 +39,28 @@ class VulkanWindow : Window {
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 		glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 		super(width, height, name);
+
+		disposer = Disposer(context);
+		swapChainDisposer = Disposer(context);
 	}
 
 	override void destroy() {
 		device.DeviceWaitIdle();
-
-		if (swapChain)
-			destroySwapChain();
-
-		if (textureSampler)
-			device.DestroySampler(textureSampler, pAllocator);
-
-		if (textureImageView)
-			device.DestroyImageView(textureImageView, pAllocator);
-
-		if (textureImage)
-			device.DestroyImage(textureImage, pAllocator);
-
-		if (textureImageMemory)
-			device.FreeMemory(textureImageMemory, pAllocator);
-
-		if (descriptorPool)
-			device.DestroyDescriptorPool(descriptorPool, pAllocator);
-
-		if (descriptorSetLayout)
-			device.DestroyDescriptorSetLayout(descriptorSetLayout, pAllocator);
-
-		if (uniformBuffer)
-			device.DestroyBuffer(uniformBuffer, pAllocator);
-
-		if (uniformBufferMemory)
-			device.FreeMemory(uniformBufferMemory, pAllocator);
-
-		if (meshBuffer)
-			device.DestroyBuffer(meshBuffer, pAllocator);
-
-		if (meshBufferMemory)
-			device.FreeMemory(meshBufferMemory, pAllocator);
-
-		if (renderFinishedSemaphore)
-			device.DestroySemaphore(renderFinishedSemaphore, pAllocator);
-
-		if (imageAvailableSemaphore)
-			device.DestroySemaphore(imageAvailableSemaphore, pAllocator);
-
-		if (commandPool)
-			device.DestroyCommandPool(commandPool, pAllocator);
-
-		if (device != DispatchDevice.init)
-			device.DestroyDevice(pAllocator);
-
-		if (surface)
-			vkDestroySurfaceKHR(instance, surface, pAllocator);
-
-		if (instance)
-			vkDestroyInstance(instance, pAllocator);
-
+		destroySwapChain();
+		disposer.dispose();
 		super.destroy();
 	}
 
 	void destroySwapChain() {
-		if (depthImageView)
-			device.DestroyImageView(depthImageView, pAllocator);
-
-		if (depthImage)
-			device.DestroyImage(depthImage, pAllocator);
-
-		if (depthImageMemory)
-			device.FreeMemory(depthImageMemory, pAllocator);
-
-		foreach (ref fb; swapChainFramebuffers)
-			device.DestroyFramebuffer(fb, pAllocator);
-
-		device.FreeCommandBuffers(commandPool, cast(uint) commandBuffers.length, commandBuffers.ptr);
-
-		if (graphicsPipeline)
-			device.DestroyPipeline(graphicsPipeline, pAllocator);
-
-		if (pipelineLayout)
-			device.DestroyPipelineLayout(pipelineLayout, pAllocator);
-
-		if (renderPass)
-			device.DestroyRenderPass(renderPass, pAllocator);
-
-		foreach (ref view; swapChainImageViews)
-			device.DestroyImageView(view, pAllocator);
-
-		if (swapChain)
-			device.vkDestroySwapchainKHR(device.vkDevice, swapChain, pAllocator);
+		swapChainDisposer.dispose();
 	}
 
 	void createSurface() {
 		glfwCreateWindowSurface(instance, ptr, pAllocator, &surface).enforceVK(
 				"glfwCreateWindowSurface");
+		disposer.register({
+			vkDestroySurfaceKHR(context.instance, context.surface, context.pAllocator);
+		});
 	}
 
 	void createInstance(const(VkInstanceCreateInfo)* pCreateInfo)
@@ -141,6 +70,7 @@ class VulkanWindow : Window {
 	body {
 		vkCreateInstance(pCreateInfo, pAllocator, &instance).enforceVK("vkCreateInstance");
 		loadInstanceLevelFunctions(instance);
+		disposer.register({ vkDestroyInstance(context.instance, context.pAllocator); });
 	}
 
 	void selectPhysicalDevice(alias rateDevice)() {
@@ -186,6 +116,7 @@ class VulkanWindow : Window {
 		vkCreateDevice(physicalDevice, &createInfoBase, pAllocator, &vkdev).enforceVK("vkCreateDevice");
 
 		device.loadDeviceLevelFunctions(vkdev);
+		disposer.register({ context.device.DestroyDevice(context.pAllocator); });
 
 		device.GetDeviceQueue(indices.present, 0, &presentQueue);
 		presentIndex = indices.present;
@@ -270,6 +201,11 @@ class VulkanWindow : Window {
 		device.vkCreateSwapchainKHR(device.vkDevice, &createInfo, pAllocator,
 				&swapChain).enforceVK("vkCreateSwapchainKHR");
 
+		swapChainDisposer.register({
+			context.device.vkDestroySwapchainKHR(context.device.vkDevice,
+				context.swapChain, context.pAllocator);
+		});
+
 		imageCount = 0;
 		device.vkGetSwapchainImagesKHR(device.vkDevice, swapChain, &imageCount, null);
 		swapChainImages.length = imageCount;
@@ -285,6 +221,8 @@ class VulkanWindow : Window {
 		foreach (i, ref image; swapChainImages) {
 			swapChainImageViews[i] = context.createImageView(image, swapChainImageFormat);
 		}
+
+		swapChainDisposer.register!"DestroyImageView"(swapChainImageViews);
 	}
 
 	void createRenderPass() {
@@ -343,6 +281,7 @@ class VulkanWindow : Window {
 
 		device.CreateRenderPass(&renderPassInfo, pAllocator, &renderPass)
 			.enforceVK("vkCreateRenderPass");
+		swapChainDisposer.register!"DestroyRenderPass"(renderPass);
 	}
 
 	void createDescriptorSetLayout() {
@@ -367,7 +306,7 @@ class VulkanWindow : Window {
 		layoutInfo.pBindings = bindings.ptr;
 
 		context.device.CreateDescriptorSetLayout(&layoutInfo, pAllocator, &descriptorSetLayout);
-
+		disposer.register!"DestroyDescriptorSetLayout"(descriptorSetLayout);
 	}
 
 	void createGraphicsPipeline() {
@@ -483,6 +422,7 @@ class VulkanWindow : Window {
 
 		device.CreatePipelineLayout(&pipelineLayoutInfo, pAllocator,
 				&pipelineLayout).enforceVK("vkCreatePipelineLayout");
+		swapChainDisposer.register!"DestroyPipelineLayout"(pipelineLayout);
 
 		VkGraphicsPipelineCreateInfo pipelineInfo;
 		pipelineInfo.stageCount = cast(uint) shaderStages.length;
@@ -503,6 +443,7 @@ class VulkanWindow : Window {
 
 		device.CreateGraphicsPipelines(VK_NULL_ND_HANDLE, 1, &pipelineInfo,
 				pAllocator, &graphicsPipeline).enforceVK("vkCreateGraphicsPipelines");
+		swapChainDisposer.register!"DestroyPipeline"(graphicsPipeline);
 	}
 
 	void createFramebuffers() {
@@ -522,6 +463,7 @@ class VulkanWindow : Window {
 			device.CreateFramebuffer(&framebufferInfo, pAllocator,
 					&swapChainFramebuffers[i]).enforceVK("vkCreateFramebuffer #" ~ i.to!string);
 		}
+		swapChainDisposer.register!"DestroyFramebuffer"(swapChainFramebuffers);
 	}
 
 	void createTextures() {
@@ -540,6 +482,8 @@ class VulkanWindow : Window {
 				VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
 				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textureImage, textureImageMemory);
 
+		disposer.register(textureImage, textureImageMemory);
+
 		context.transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_UNORM,
 				VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 		context.copyBufferToImage(stagingBuffer, textureImage, image.w, image.h);
@@ -550,6 +494,7 @@ class VulkanWindow : Window {
 		device.FreeMemory(stagingBufferMemory, pAllocator);
 
 		textureImageView = context.createImageView(textureImage, VK_FORMAT_R8G8B8A8_UNORM);
+		context.disposer.register!"DestroyImageView"(textureImageView);
 
 		VkSamplerCreateInfo samplerInfo;
 		samplerInfo.magFilter = VK_FILTER_LINEAR;
@@ -574,6 +519,7 @@ class VulkanWindow : Window {
 		samplerInfo.minLod = 0.0f;
 		samplerInfo.maxLod = 0.0f;
 		device.CreateSampler(&samplerInfo, pAllocator, &textureSampler).enforceVK("vkCreateSampler");
+		context.disposer.register!"DestroySampler"(textureSampler);
 	}
 
 	Vertex[] vertices = [];
@@ -672,6 +618,7 @@ class VulkanWindow : Window {
 		createBuffer(context, meshBufferSize,
 				VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
 				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, meshBuffer, meshBufferMemory);
+		disposer.register(meshBuffer, meshBufferMemory);
 
 		VkBuffer stagingBuffer;
 		VkDeviceMemory stagingBufferMemory;
@@ -691,6 +638,7 @@ class VulkanWindow : Window {
 		createBuffer(context, uniformBufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
 				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
 				uniformBuffer, uniformBufferMemory);
+		disposer.register(uniformBuffer, uniformBufferMemory);
 	}
 
 	void createDescriptorPool() {
@@ -707,6 +655,7 @@ class VulkanWindow : Window {
 
 		device.CreateDescriptorPool(&poolInfo, pAllocator, &descriptorPool)
 			.enforceVK("vkCreateDescriptorPool");
+		disposer.register!"DestroyDescriptorPool"(descriptorPool);
 	}
 
 	void createDescriptorSet() {
@@ -753,6 +702,7 @@ class VulkanWindow : Window {
 		poolInfo.flags = 0;
 		device.CreateCommandPool(&poolInfo, pAllocator, &commandPool)
 			.enforceVK("vkCreateCommandPool");
+		disposer.register!"DestroyCommandPool"(commandPool);
 	}
 
 	void createDepthResources() {
@@ -763,6 +713,9 @@ class VulkanWindow : Window {
 		depthImageView = context.createImageView(depthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
 		context.transitionImageLayout(depthImage, depthFormat,
 				VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+
+		swapChainDisposer.register!"DestroyImageView"(depthImageView);
+		swapChainDisposer.register(depthImage, depthImageMemory);
 	}
 
 	void createCommandBuffers() {
@@ -775,6 +728,10 @@ class VulkanWindow : Window {
 
 		device.AllocateCommandBuffers(&allocInfo, commandBuffers.ptr)
 			.enforceVK("vkAllocateCommandBuffers");
+		swapChainDisposer.register({
+			context.device.FreeCommandBuffers(context.commandPool,
+				cast(uint) context.commandBuffers.length, context.commandBuffers.ptr);
+		});
 
 		foreach (i, ref commandBuffer; commandBuffers) {
 			VkCommandBufferBeginInfo beginInfo;
@@ -825,6 +782,8 @@ class VulkanWindow : Window {
 			.enforceVK("vkCreateSemaphore imageAvailableSemaphore");
 		device.CreateSemaphore(&semaphoreInfo, pAllocator, &renderFinishedSemaphore)
 			.enforceVK("vkCreateSemaphore renderFinishedSemaphore");
+		disposer.register!"DestroySemaphore"(renderFinishedSemaphore);
+		disposer.register!"DestroySemaphore"(imageAvailableSemaphore);
 	}
 
 	StopWatch updateTimer;

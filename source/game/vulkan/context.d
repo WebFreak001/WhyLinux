@@ -4,9 +4,13 @@ import erupted;
 
 import gl3n.linalg;
 
+import game.vulkan.disposer;
+
+alias PAllocators = const(VkAllocationCallbacks)*;
+
 struct VulkanContext {
 	VkInstance instance;
-	const(VkAllocationCallbacks)* pAllocator;
+	PAllocators pAllocator;
 	VkPhysicalDevice physicalDevice;
 	DispatchDevice device;
 	VkSwapchainKHR swapChain;
@@ -27,6 +31,8 @@ struct VulkanContext {
 	VkDescriptorPool descriptorPool;
 	VkDescriptorSet descriptorSet;
 	VkPhysicalDeviceFeatures deviceFeatures;
+	Disposer disposer;
+	Disposer swapChainDisposer;
 
 	VkBuffer meshBuffer;
 	VkDeviceMemory meshBufferMemory;
