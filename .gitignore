@@ -16,3 +16,4 @@ whylinux-test-*
 dub.selections.json
 *.spv
 !meshes/*.obj
+bin/
