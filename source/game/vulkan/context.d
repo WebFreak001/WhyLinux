@@ -29,19 +29,9 @@ struct VulkanContext {
 	VkCommandPool commandPool;
 	VkCommandBuffer[] commandBuffers;
 	VkDescriptorPool descriptorPool;
-	VkDescriptorSet descriptorSet;
 	VkPhysicalDeviceFeatures deviceFeatures;
 	Disposer disposer;
 	Disposer swapChainDisposer;
-
-	VkBuffer meshBuffer;
-	VkDeviceMemory meshBufferMemory;
-	VkBuffer uniformBuffer;
-	VkDeviceMemory uniformBufferMemory;
-	VkImage textureImage;
-	VkImageView textureImageView;
-	VkSampler textureSampler;
-	VkDeviceMemory textureImageMemory;
 
 	VkSemaphore imageAvailableSemaphore;
 	VkSemaphore renderFinishedSemaphore;

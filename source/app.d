@@ -9,6 +9,8 @@ import glfw3d;
 import game.vulkan.wrap;
 import game.vulkan.window;
 
+import game.game;
+
 static string[] deviceExtensions = [VK_KHR_SWAPCHAIN_EXTENSION_NAME];
 
 void main() {
@@ -18,7 +20,7 @@ void main() {
 	scope (exit)
 		glfw3dTerminate();
 
-	VulkanWindow w = new VulkanWindow(853, 600, "WhyLinux");
+	auto w = new GameWindow(853, 600);
 
 	w.setUserPointer(cast(void*) cast(Window) w);
 	w.setSizeCallback(&onWindowResized);
@@ -67,11 +69,9 @@ void main() {
 	w.createCommandPool();
 	w.createDepthResources();
 	w.createFramebuffers();
-
-	w.createTextures();
-	w.createMeshBuffers();
 	w.createDescriptorPool();
-	w.createDescriptorSet();
+
+	w.onLoad();
 
 	w.createCommandBuffers();
 	w.createSemaphores();

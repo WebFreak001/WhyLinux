@@ -98,7 +98,7 @@ struct PositionColorTexCoordVertex {
 	mixin VertexBase;
 }
 
-struct Mesh(Vertex = Vertex, Index = ushort) {
+struct Mesh(Vertex, Index = ushort) {
 	static assert(is(Index == ushort) || is(Index == uint));
 
 	Vertex[] vertices;
@@ -107,6 +107,7 @@ struct Mesh(Vertex = Vertex, Index = ushort) {
 	VkBuffer buffer;
 	VkDeviceMemory bufferMemory;
 
+	private VulkanContext* context;
 	private VkDeviceSize indexOffset;
 	private PAllocators allocators;
 
@@ -116,8 +117,8 @@ struct Mesh(Vertex = Vertex, Index = ushort) {
 
 	void destroy() {
 		if (buffer) {
-			device.DestroyBuffer(buffer, allocators);
-			device.FreeMemory(bufferMemory, allocators);
+			context.device.DestroyBuffer(buffer, allocators);
+			context.device.FreeMemory(bufferMemory, allocators);
 
 			buffer = null;
 			bufferMemory = null;
@@ -125,6 +126,8 @@ struct Mesh(Vertex = Vertex, Index = ushort) {
 	}
 
 	void create(ref VulkanContext context) {
+		this.context = &context;
+
 		allocators = context.pAllocator;
 
 		VkDeviceSize verticesSize = indexOffset = vertices.length * Vertex.sizeof;
@@ -152,7 +155,7 @@ struct Mesh(Vertex = Vertex, Index = ushort) {
 		context.device.FreeMemory(stagingBufferMemory, context.pAllocator);
 	}
 
-	void bind(ref VulkanContext context, VkCommandBuffer commandBuffer) {
+	void bind(VkCommandBuffer commandBuffer) {
 		VkDeviceSize vertexOffset = 0;
 		context.device.vkCmdBindVertexBuffers(commandBuffer, 0, 1, &buffer, &vertexOffset);
 

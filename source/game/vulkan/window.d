@@ -35,13 +35,21 @@ class VulkanWindow : Window {
 	VulkanContext context;
 	alias context this;
 
+	ref auto device() {
+		return context.device;
+	}
+
+	ref auto disposer() {
+		return context.disposer;
+	}
+
 	this(int width, int height, string name) {
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 		glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 		super(width, height, name);
 
-		disposer = Disposer(context);
-		swapChainDisposer = Disposer(context);
+		context.disposer = Disposer(context);
+		context.swapChainDisposer = Disposer(context);
 	}
 
 	override void destroy() {
@@ -284,31 +292,6 @@ class VulkanWindow : Window {
 		swapChainDisposer.register!"DestroyRenderPass"(renderPass);
 	}
 
-	void createDescriptorSetLayout() {
-		VkDescriptorSetLayoutBinding uniformsLayoutBinding;
-		uniformsLayoutBinding.binding = 0;
-		uniformsLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-		uniformsLayoutBinding.descriptorCount = 1;
-		uniformsLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-		uniformsLayoutBinding.pImmutableSamplers = null;
-
-		VkDescriptorSetLayoutBinding samplerLayoutBinding;
-		samplerLayoutBinding.binding = 1;
-		samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		samplerLayoutBinding.descriptorCount = 1;
-		samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-		samplerLayoutBinding.pImmutableSamplers = null;
-
-		VkDescriptorSetLayoutBinding[2] bindings = [uniformsLayoutBinding, samplerLayoutBinding];
-
-		VkDescriptorSetLayoutCreateInfo layoutInfo;
-		layoutInfo.bindingCount = cast(uint) bindings.length;
-		layoutInfo.pBindings = bindings.ptr;
-
-		context.device.CreateDescriptorSetLayout(&layoutInfo, pAllocator, &descriptorSetLayout);
-		disposer.register!"DestroyDescriptorSetLayout"(descriptorSetLayout);
-	}
-
 	void createGraphicsPipeline() {
 		auto vertShaderModule = context.createShaderModule("shaders/vert.spv");
 		scope (exit)
@@ -466,181 +449,6 @@ class VulkanWindow : Window {
 		swapChainDisposer.register!"DestroyFramebuffer"(swapChainFramebuffers);
 	}
 
-	void createTextures() {
-		import imageformats;
-
-		auto image = read_image("textures/dman.jpg", ColFmt.RGBA);
-
-		VkDeviceSize imageSize = image.w * image.h * 4;
-
-		VkBuffer stagingBuffer;
-		VkDeviceMemory stagingBufferMemory;
-		context.createTransferSrcBuffer(imageSize, stagingBuffer, stagingBufferMemory);
-		context.fillGPUMemory(stagingBufferMemory, 0, image.pixels);
-
-		context.createImage(image.w, image.h, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL,
-				VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textureImage, textureImageMemory);
-
-		disposer.register(textureImage, textureImageMemory);
-
-		context.transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_UNORM,
-				VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-		context.copyBufferToImage(stagingBuffer, textureImage, image.w, image.h);
-		context.transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_UNORM,
-				VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-
-		device.DestroyBuffer(stagingBuffer, pAllocator);
-		device.FreeMemory(stagingBufferMemory, pAllocator);
-
-		textureImageView = context.createImageView(textureImage, VK_FORMAT_R8G8B8A8_UNORM);
-		context.disposer.register!"DestroyImageView"(textureImageView);
-
-		VkSamplerCreateInfo samplerInfo;
-		samplerInfo.magFilter = VK_FILTER_LINEAR;
-		samplerInfo.minFilter = VK_FILTER_LINEAR;
-		samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-		samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-		samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-		if (deviceFeatures.samplerAnisotropy) {
-			samplerInfo.anisotropyEnable = VK_TRUE;
-			samplerInfo.maxAnisotropy = 16;
-		}
-		else {
-			samplerInfo.anisotropyEnable = VK_FALSE;
-			samplerInfo.maxAnisotropy = 1;
-		}
-		samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-		samplerInfo.unnormalizedCoordinates = VK_FALSE;
-		samplerInfo.compareEnable = VK_FALSE;
-		samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
-		samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-		samplerInfo.mipLodBias = 0.0f;
-		samplerInfo.minLod = 0.0f;
-		samplerInfo.maxLod = 0.0f;
-		device.CreateSampler(&samplerInfo, pAllocator, &textureSampler).enforceVK("vkCreateSampler");
-		context.disposer.register!"DestroySampler"(textureSampler);
-	}
-
-	PositionNormalTexCoordVertex[] vertices;
-	size_t verticesSize;
-	ushort[] indices;
-	size_t indicesSize;
-	void loadMesh() {
-		import std.algorithm;
-		import std.conv;
-		import std.stdio;
-		import std.string;
-
-		string mesh = "meshes/house.obj";
-		vec3[] vecPool;
-		vec3[] nrmPool;
-		vec2[] texPool;
-
-		ushort[3][] addedVerts;
-
-		foreach (line; File(mesh).byLine) {
-			auto parts = line.splitter;
-			if (parts.empty)
-				continue;
-			if (parts.front == "v") {
-				parts.popFront;
-				vec3 v;
-				v.x = parts.front.to!float;
-				parts.popFront;
-				v.y = parts.front.to!float;
-				parts.popFront;
-				v.z = parts.front.to!float;
-				vecPool ~= v;
-			}
-			else if (parts.front == "vn") {
-				parts.popFront;
-				vec3 v;
-				v.x = parts.front.to!float;
-				parts.popFront;
-				v.y = parts.front.to!float;
-				parts.popFront;
-				v.z = parts.front.to!float;
-				nrmPool ~= v;
-			}
-			else if (parts.front == "vt") {
-				parts.popFront;
-				vec2 v;
-				v.x = parts.front.to!float;
-				parts.popFront;
-				v.y = parts.front.to!float;
-				texPool ~= v;
-			}
-			else if (parts.front == "f") {
-				parts.popFront;
-				foreach (part; parts) {
-					auto ind = part.splitter('/');
-					auto i1s = ind.front;
-					ind.popFront;
-					auto i2s = ind.front;
-					ind.popFront;
-					auto i3s = ind.front;
-					ushort i1, i2, i3;
-					if (i1s.empty)
-						i1 = 0;
-					else
-						i1 = i1s.to!ushort;
-					if (i2s.empty)
-						i2 = 0;
-					else
-						i2 = i2s.to!ushort;
-					if (i3s.empty)
-						i3 = 0;
-					else
-						i3 = i3s.to!ushort;
-					ushort[3] index = [i1, i2, i3];
-					auto existing = addedVerts.countUntil(index);
-					if (existing == -1) {
-						indices ~= cast(ushort) vertices.length;
-						vertices ~= PositionNormalTexCoordVertex(vecPool[i1 - 1], nrmPool[i3 - 1], texPool[i2 - 1]);
-					}
-					else {
-						indices ~= cast(ushort) existing;
-					}
-				}
-			}
-		}
-
-		verticesSize = vertices.length * PositionNormalTexCoordVertex.sizeof;
-		indicesSize = indices.length * ushort.sizeof;
-	}
-
-	void createMeshBuffers() {
-		loadMesh();
-
-		VkDeviceSize meshBufferSize = verticesSize + indicesSize;
-
-		createBuffer(context, meshBufferSize,
-				VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, meshBuffer, meshBufferMemory);
-		disposer.register(meshBuffer, meshBufferMemory);
-
-		VkBuffer stagingBuffer;
-		VkDeviceMemory stagingBufferMemory;
-		context.createTransferSrcBuffer(meshBufferSize, stagingBuffer, stagingBufferMemory);
-
-		context.fillGPUMemory!((void[] data) {
-			data[0 .. verticesSize] = cast(void[]) vertices;
-			data[verticesSize .. verticesSize + indicesSize] = cast(void[]) indices;
-		})(stagingBufferMemory, meshBufferSize);
-
-		copyBufferSync(context, stagingBuffer, meshBuffer, meshBufferSize);
-
-		device.DestroyBuffer(stagingBuffer, pAllocator);
-		device.FreeMemory(stagingBufferMemory, pAllocator);
-
-		VkDeviceSize uniformBufferSize = UniformBufferObject.sizeof;
-		createBuffer(context, uniformBufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-				uniformBuffer, uniformBufferMemory);
-		disposer.register(uniformBuffer, uniformBufferMemory);
-	}
-
 	void createDescriptorPool() {
 		VkDescriptorPoolSize[2] poolSizes;
 		poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -656,44 +464,6 @@ class VulkanWindow : Window {
 		device.CreateDescriptorPool(&poolInfo, pAllocator, &descriptorPool)
 			.enforceVK("vkCreateDescriptorPool");
 		disposer.register!"DestroyDescriptorPool"(descriptorPool);
-	}
-
-	void createDescriptorSet() {
-		VkDescriptorSetAllocateInfo allocInfo;
-		allocInfo.descriptorPool = descriptorPool;
-		allocInfo.descriptorSetCount = 1;
-		allocInfo.pSetLayouts = &descriptorSetLayout;
-
-		device.AllocateDescriptorSets(&allocInfo, &descriptorSet)
-			.enforceVK("vkAllocateDescriptorSets");
-
-		VkDescriptorBufferInfo bufferInfo;
-		bufferInfo.buffer = uniformBuffer;
-		bufferInfo.offset = 0;
-		bufferInfo.range = UniformBufferObject.sizeof;
-
-		VkDescriptorImageInfo imageInfo;
-		imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-		imageInfo.imageView = textureImageView;
-		imageInfo.sampler = textureSampler;
-
-		VkWriteDescriptorSet[2] writeDescriptors;
-
-		writeDescriptors[0].dstSet = descriptorSet;
-		writeDescriptors[0].dstBinding = 0;
-		writeDescriptors[0].dstArrayElement = 0;
-		writeDescriptors[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-		writeDescriptors[0].descriptorCount = 1;
-		writeDescriptors[0].pBufferInfo = &bufferInfo;
-
-		writeDescriptors[1].dstSet = descriptorSet;
-		writeDescriptors[1].dstBinding = 1;
-		writeDescriptors[1].dstArrayElement = 0;
-		writeDescriptors[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		writeDescriptors[1].descriptorCount = 1;
-		writeDescriptors[1].pImageInfo = &imageInfo;
-
-		device.UpdateDescriptorSets(cast(uint) writeDescriptors.length, writeDescriptors.ptr, 0, null);
 	}
 
 	void createCommandPool() {
@@ -759,17 +529,7 @@ class VulkanWindow : Window {
 			device.vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 			device.vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
-			VkDeviceSize vertexOffset = 0;
-			VkDeviceSize indexOffset = verticesSize;
-			device.vkCmdBindVertexBuffers(commandBuffer, 0, 1, &meshBuffer, &vertexOffset);
-
-			context.device.vkCmdBindIndexBuffer(commandBuffer, meshBuffer, indexOffset,
-					is(typeof(indices[0]) == ushort) ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
-
-			context.device.vkCmdBindDescriptorSets(commandBuffer,
-					VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSet, 0, null);
-
-			context.device.vkCmdDrawIndexed(commandBuffer, cast(uint) indices.length, 1, 0, 0, 0);
+			onBuildRenderpass(commandBuffer);
 
 			device.vkCmdEndRenderPass(commandBuffer);
 			device.vkEndCommandBuffer(commandBuffer).enforceVK("vkEndCommandBuffer #" ~ i.to!string);
@@ -786,10 +546,19 @@ class VulkanWindow : Window {
 		disposer.register!"DestroySemaphore"(imageAvailableSemaphore);
 	}
 
+	final int width() {
+		return swapChainExtent.width;
+	}
+
+	final int height() {
+		return swapChainExtent.height;
+	}
+
 	StopWatch updateTimer;
 	double time = 0;
 	double fracTime = 0;
 	int frames;
+
 	void update() {
 		updateTimer.stop();
 		double delta = updateTimer.peek.total!"hnsecs" / 10_000_000.0;
@@ -814,18 +583,7 @@ class VulkanWindow : Window {
 			fracTime -= 1;
 		}
 
-		UniformBufferObject uniforms;
-		uniforms.model = mat4.zrotation(time * 3.1415926 / 2);
-		uniforms.view = mat4.look_at(vec3(20, 20, 10), vec3(0), vec3(0, 0, 1));
-		uniforms.projection = mat4.perspective(swapChainExtent.width,
-				swapChainExtent.height, 45, 0.1f, 100.0f);
-		uniforms.projection[1][1] *= -1;
-
-		uniforms.model.transpose();
-		uniforms.view.transpose();
-		uniforms.projection.transpose();
-
-		context.fillGPUMemory(uniformBufferMemory, 0, uniforms);
+		onUpdate(delta);
 
 		// TODO: look at push constants
 	}
@@ -880,4 +638,9 @@ class VulkanWindow : Window {
 
 		device.vkQueueWaitIdle(presentQueue);
 	}
+
+	abstract void createDescriptorSet();
+	abstract void onLoad();
+	abstract void onUpdate(double delta);
+	abstract void onBuildRenderpass(VkCommandBuffer commandBuffer);
 }
