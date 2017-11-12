@@ -6,7 +6,7 @@ import gl3n.linalg;
 
 struct Vertex {
 	vec3 pos;
-	vec3 color;
+	vec3 normal;
 	vec2 texCoord;
 
 	static VkVertexInputBindingDescription bindingDescription() {
@@ -33,7 +33,7 @@ struct Vertex {
 		ret[2].binding = 0;
 		ret[2].location = 2;
 		ret[2].format = VK_FORMAT_R32G32_SFLOAT;
-		ret[2].offset = pos.sizeof + color.sizeof;
+		ret[2].offset = pos.sizeof + normal.sizeof;
 
 		return ret;
 	}

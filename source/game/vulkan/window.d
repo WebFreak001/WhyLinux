@@ -16,32 +16,6 @@ import std.datetime.stopwatch;
 import std.file : readFile = read;
 import std.traits;
 
-//dfmt off
-__gshared Vertex[8] vertices = [
-	Vertex(vec3(-0.5f, -0.5f, 0), vec3(1, 0, 0), vec2(1, 0)),
-	Vertex(vec3(0.5f, -0.5f, 0), vec3(0, 1, 0), vec2(0, 0)),
-	Vertex(vec3(0.5f, 0.5f, 0), vec3(0, 0, 1), vec2(0, 1)),
-	Vertex(vec3(-0.5f, 0.5f, 0), vec3(1, 1, 0), vec2(1, 1)),
-
-	Vertex(vec3(-0.5f, -0.5f, -0.5f), vec3(1, 0, 0), vec2(1, 0)),
-	Vertex(vec3(0.5f, -0.5f, -0.5f), vec3(0, 1, 0), vec2(0, 0)),
-	Vertex(vec3(0.5f, 0.5f, -0.5f), vec3(0, 0, 1), vec2(0, 1)),
-	Vertex(vec3(-0.5f, 0.5f, -0.5f), vec3(1, 1, 0), vec2(1, 1)),
-];
-
-__gshared auto verticesSize = vertices.sizeof;
-
-__gshared ushort[12] indices = [
-	0, 1, 2, 2, 3, 0,
-	4, 5, 6, 6, 7, 4,
-];
-
-__gshared auto indicesSize = indices.sizeof;
-
-static assert(isStaticArray!(typeof(vertices)));
-static assert(isStaticArray!(typeof(indices)));
-
-//dfmt on
 
 /// Callback for rating a device. Return <=0 if unsuitable
 alias DeviceScoreFn = int function(VkSurfaceKHR, VkPhysicalDevice,
@@ -602,7 +576,97 @@ class VulkanWindow : Window {
 		device.CreateSampler(&samplerInfo, pAllocator, &textureSampler).enforceVK("vkCreateSampler");
 	}
 
+	Vertex[] vertices = [];
+	size_t verticesSize;
+	ushort[] indices;
+	size_t indicesSize;
+	void loadMesh() {
+		import std.algorithm;
+		import std.conv;
+		import std.stdio;
+		import std.string;
+
+		string mesh = "meshes/house.obj";
+		vec3[] vecPool;
+		vec3[] nrmPool;
+		vec2[] texPool;
+
+		ushort[3][] addedVerts;
+
+		foreach (line; File(mesh).byLine) {
+			auto parts = line.splitter;
+			if (parts.empty)
+				continue;
+			if (parts.front == "v") {
+				parts.popFront;
+				vec3 v;
+				v.x = parts.front.to!float;
+				parts.popFront;
+				v.y = parts.front.to!float;
+				parts.popFront;
+				v.z = parts.front.to!float;
+				vecPool ~= v;
+			}
+			else if (parts.front == "vn") {
+				parts.popFront;
+				vec3 v;
+				v.x = parts.front.to!float;
+				parts.popFront;
+				v.y = parts.front.to!float;
+				parts.popFront;
+				v.z = parts.front.to!float;
+				nrmPool ~= v;
+			}
+			else if (parts.front == "vt") {
+				parts.popFront;
+				vec2 v;
+				v.x = parts.front.to!float;
+				parts.popFront;
+				v.y = parts.front.to!float;
+				texPool ~= v;
+			}
+			else if (parts.front == "f") {
+				parts.popFront;
+				foreach (part; parts) {
+					auto ind = part.splitter('/');
+					auto i1s = ind.front;
+					ind.popFront;
+					auto i2s = ind.front;
+					ind.popFront;
+					auto i3s = ind.front;
+					ushort i1, i2, i3;
+					if (i1s.empty)
+						i1 = 0;
+					else
+						i1 = i1s.to!ushort;
+					if (i2s.empty)
+						i2 = 0;
+					else
+						i2 = i2s.to!ushort;
+					if (i3s.empty)
+						i3 = 0;
+					else
+						i3 = i3s.to!ushort;
+					ushort[3] index = [i1, i2, i3];
+					auto existing = addedVerts.countUntil(index);
+					if (existing == -1) {
+						indices ~= cast(ushort) vertices.length;
+						vertices ~= Vertex(vecPool[i1 - 1], nrmPool[i3 - 1], texPool[i2 - 1]);
+					}
+					else {
+						indices ~= cast(ushort) existing;
+					}
+				}
+			}
+		}
+
+		verticesSize = vertices.length * Vertex.sizeof;
+		indicesSize = indices.length * ushort.sizeof;
+	}
+
 	void createMeshBuffers() {
+		loadMesh();
+
 		VkDeviceSize meshBufferSize = verticesSize + indicesSize;
 
 		createBuffer(context, meshBufferSize,
@@ -793,9 +857,9 @@ class VulkanWindow : Window {
 
 		UniformBufferObject uniforms;
 		uniforms.model = mat4.zrotation(time * 3.1415926 / 2);
-		uniforms.view = mat4.look_at(vec3(2, 2, 2), vec3(0), vec3(0, 0, 1));
+		uniforms.view = mat4.look_at(vec3(20, 20, 10), vec3(0), vec3(0, 0, 1));
 		uniforms.projection = mat4.perspective(swapChainExtent.width,
-				swapChainExtent.height, 45, 0.1f, 10.0f);
+				swapChainExtent.height, 45, 0.1f, 100.0f);
 		uniforms.projection[1][1] *= -1;
 
 		uniforms.model.transpose();
