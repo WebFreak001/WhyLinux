@@ -10,5 +10,5 @@ layout(binding = 1) uniform sampler2D texSampler;
 
 void main() {
 	vec4 f = texture(texSampler, fragTexCoord);
-	outColor = vec4(f.rgb * dot(normalize(vec3(0, 1, 1)), fragNormal), f.a);
+	outColor = vec4(f.rgb * max(0.1, dot(normalize(vec3(1, 1, 1)), fragNormal)), f.a);
 }

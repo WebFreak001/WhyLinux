@@ -3,7 +3,7 @@
 
 layout(binding = 0) uniform UniformBufferObject {
 	// keep in sync with context.d
-	mat4 model, view, projection;
+	mat4 model, view, projection, light;
 } uniforms;
 
 layout(location = 0) in vec3 inPosition;
@@ -19,6 +19,6 @@ out gl_PerVertex {
 
 void main() {
 	gl_Position = uniforms.projection * uniforms.view * uniforms.model * vec4(inPosition, 1.0);
-	fragNormal = (transpose(inverse(uniforms.view * uniforms.model)) * vec4(inNormal, 0.0)).xyz;
+	fragNormal = (uniforms.light * vec4(inNormal, 0.0)).xyz;
 	fragTexCoord = inTexCoord;
 }

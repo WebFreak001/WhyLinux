@@ -53,5 +53,5 @@ struct VulkanContext {
 
 struct UniformBufferObject {
 	// keep in sync with shaders
-	mat4 model, view, projection;
+	mat4 model, view, projection, light;
 }

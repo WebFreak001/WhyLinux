@@ -8,10 +8,43 @@ import game.vulkan.window;
 import game.vulkan.wrap;
 
 import gl3n.linalg;
+import gl3n.math;
+
+import dmech.geometry;
+import dmech.rigidbody;
+import dmech.world;
+import dlib.core.memory;
+import dlib.math.vector : Vector3f;
+import dlib.math.matrix : Matrix4x4f;
+
+public enum real PI_OVER_2 = PI / 2.0;
+
+import glfw3d;
 
 class GameWindow : VulkanWindow {
+	PhysicsWorld world;
+	RigidBody bPlayer;
+
 	this(int width, int height) {
 		super(width, height, "WhyLinux");
+
+		setInputMode(GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+
+		world = New!PhysicsWorld();
+		world.gravity = Vector3f(0, 0, -9.8f);
+
+		RigidBody bGround = world.addStaticBody(Vector3f(0, 0, -1));
+		Geometry gGround = New!GeomBox(Vector3f(100.0f, 100.0f, 1.0f));
+		world.addShapeComponent(bGround, gGround, Vector3f(0, 0, 0), 1.0f);
+
+		bPlayer = world.addDynamicBody(Vector3f(0, 0, 10), 800);
+		bPlayer.enableRotation = false;
+		Geometry gPlayer = New!GeomEllipsoid(Vector3f(0.3f, 0.3f, 0.9f));
+		world.addShapeComponent(bPlayer, gPlayer, Vector3f(0, 0, 0), 1.0f);
+	}
+
+	~this() {
+		Delete(world);
 	}
 
 	Mesh!PositionNormalTexCoordVertex meshObject;
@@ -223,16 +256,61 @@ class GameWindow : VulkanWindow {
 		createDescriptorSet();
 	}
 
+	CursorPosition prevCursor = CursorPosition(0, 0);
+	double yaw = 0, pitch = 0;
+	bool prevSpace;
 	override void onUpdate(double delta) {
+		world.update(delta);
+
+		auto cursor = getCursorPosition();
+		double dx = cursor.x - prevCursor.x;
+		double dy = cursor.y - prevCursor.y;
+		prevCursor = cursor;
+
+		yaw += dx * 7 * delta;
+		pitch += dy * 7 * delta;
+
+		if (pitch < -cradians!180)
+			pitch = -cradians!180;
+		else if (pitch > cradians!0)
+			pitch = cradians!0;
+
+		Vector3f input = Vector3f(0, 0, 0);
+		if (getKey(GLFW_KEY_W) == GLFW_PRESS)
+			input += Vector3f(sin(yaw), cos(yaw), 0);
+		if (getKey(GLFW_KEY_A) == GLFW_PRESS)
+			input += Vector3f(-cos(yaw), sin(yaw), 0);
+		if (getKey(GLFW_KEY_S) == GLFW_PRESS)
+			input += Vector3f(-sin(yaw), -cos(yaw), 0);
+		if (getKey(GLFW_KEY_D) == GLFW_PRESS)
+			input += Vector3f(cos(yaw), -sin(yaw), 0);
+		if (getKey(GLFW_KEY_SPACE) == GLFW_PRESS && !prevSpace && bPlayer.linearVelocity.z <= 2)
+			bPlayer.linearVelocity.z += 10;
+		prevSpace = getKey(GLFW_KEY_SPACE) == GLFW_PRESS;
+
+		Vector3f floorVelocity = Vector3f(0, 0, 0);
+
+		if (input.lengthsqr > 0)
+			bPlayer.linearVelocity += input.normalized * 35 * delta;
+
+		float movementLoss = pow(0.005, delta);
+		bPlayer.linearVelocity.x = (bPlayer.linearVelocity.x - floorVelocity.x) * movementLoss + floorVelocity.x;
+		bPlayer.linearVelocity.y = (bPlayer.linearVelocity.y - floorVelocity.y) * movementLoss + floorVelocity.y;
+
+		auto position = bPlayer.shapes[0].transformation.getColumn(3);
+
 		UniformBufferObject uniforms;
-		uniforms.model = mat4.zrotation(time * 3.1415926 / 2);
-		uniforms.view = mat4.look_at(vec3(20, 20, 10), vec3(0), vec3(0, 0, 1));
-		uniforms.projection = mat4.perspective(width, height, 45, 0.1f, 100.0f);
+		uniforms.model = mat4.identity;
+		uniforms.view = mat4.xrotation(pitch) * mat4.zrotation(yaw) * mat4.translation(
+				-position.x, -position.y, -position.z) * mat4.translation(0, 0, -0.3);
+		uniforms.projection = mat4.perspective(width, height, 60, 0.1f, 100.0f);
 		uniforms.projection[1][1] *= -1;
 
 		uniforms.model.transpose();
 		uniforms.view.transpose();
 		uniforms.projection.transpose();
+
+		uniforms.light = uniforms.model.inverse;
 
 		context.fillGPUMemory(uniformBufferMemory, 0, uniforms);
 	}
